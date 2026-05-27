@@ -88,13 +88,21 @@ pub fn get_linguist_tokens(content: &str) -> Vec<String> {
                         }
                     }
                 }
-                // Maximal-munch adjacent symbol chars
+                // Maximal-munch adjacent same-class symbol chars. Brackets
+                // never coalesce — emit them individually. Coalescing only
+                // applies to operator-class chars so JSFuck and other
+                // bracket-heavy inputs stay tokenizable.
+                if is_bracket(s) {
+                    out.push((*s).to_string());
+                    i += 1;
+                    continue;
+                }
                 let mut combined = String::from(*s);
                 let mut end_pos = pos + s.len();
                 let mut j = i + 1;
                 while j < raw.len() {
                     if let Token::Symbol(next_s) = &raw[j].0 {
-                        if raw[j].1 == end_pos {
+                        if raw[j].1 == end_pos && !is_bracket(next_s) {
                             combined.push_str(next_s);
                             end_pos += next_s.len();
                             j += 1;
@@ -110,6 +118,10 @@ pub fn get_linguist_tokens(content: &str) -> Vec<String> {
     }
 
     out
+}
+
+fn is_bracket(s: &str) -> bool {
+    matches!(s, "(" | ")" | "[" | "]" | "{" | "}")
 }
 
 fn extract_interpreter(after_bang: &str) -> String {
