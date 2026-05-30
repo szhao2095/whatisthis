@@ -2007,6 +2007,22 @@ JavaScript+JSFuck:
   extensions:
   - ".js"
   language_id: 900204
+JavaScript+LongIdent:
+  type: programming
+  tm_scope: source.js
+  group: JavaScript
+  color: "#f1e05a"
+  extensions:
+  - ".js"
+  language_id: 900205
+JavaScript+CharCodeSubtract:
+  type: programming
+  tm_scope: source.js
+  group: JavaScript
+  color: "#f1e05a"
+  extensions:
+  - ".js"
+  language_id: 900206
 HTML:
   type: markup
   tm_scope: text.html.basic

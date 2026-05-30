@@ -140,7 +140,7 @@ static INTERPRETERS: phf::Map<&'static str, &[&str]> =
         ("gerbv", &["Gerber Image"]),
         ("rakudo", &["Raku"]),
         ("lisp", &["Common Lisp"]),
-        ("lua", &["Lua", "Terra"]),
+        ("lua", &["Terra", "Lua"]),
         ("z3", &["SMT"]),
         ("cwl-runner", &["Common Workflow Language"]),
         ("ocamlrun", &["OCaml"]),
