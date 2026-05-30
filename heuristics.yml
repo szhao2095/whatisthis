@@ -506,6 +506,8 @@ disambiguations:
   rules:
   - language: Vim script
     pattern: '^UseVimball'
+  - language: VBA+JSONPacked
+    pattern: '^\s*\{\s*"[^"]+"\s*:\s*"Attribute\s+VB_Name\s*='
   - language: VBA
 - extensions: ['.w']
   rules:

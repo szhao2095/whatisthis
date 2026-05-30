@@ -129,7 +129,7 @@ static INTERPRETERS: phf::Map<&'static str, &[&str]> =
         ("r6rs", &["Scheme"]),
         ("jconsole", &["J"]),
         ("groovy", &["Groovy"]),
-        ("perl6", &["Raku", "Pod 6"]),
+        ("perl6", &["Pod 6", "Raku"]),
         ("asy", &["Asymptote"]),
         ("ruby", &["Ruby"]),
         ("smt-rat", &["SMT"]),

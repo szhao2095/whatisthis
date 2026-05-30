@@ -5696,6 +5696,14 @@ VBA:
   codemirror_mode: vb
   codemirror_mime_type: text/x-vb
   language_id: 399230729
+VBA+JSONPacked:
+  type: programming
+  tm_scope: source.vbnet
+  group: VBA
+  color: "#867db1"
+  extensions:
+  - ".vba"
+  language_id: 900300
 VBScript:
   type: programming
   color: "#15dcdc"

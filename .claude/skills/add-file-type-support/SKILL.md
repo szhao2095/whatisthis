@@ -87,10 +87,34 @@ Base+Variant:
   color: "#<base-color>"
   extensions:
   - ".<ext>"
-  language_id: <next free in 9002xx range for JS, pick fresh elsewhere>
+  language_id: <next free, see below>
 ```
 
-Find the next free `language_id` by `grep "language_id: 9002" languages.yml | sort -t: -k2 -n` and increment. For other base languages, follow whatever convention is already in use.
+Find a fresh `language_id` by `grep "language_id: 900" languages.yml | sort -t: -k2 -n | tail`. Existing convention: JS+ variants in `900200–900206`, VBA+ in `900300+`. Pick an unused number grouped by base language.
+
+**Extension claims have side-effects.** Extension routing limits the candidate set the classifier sees. Implications:
+
+- If you claim a common extension (e.g., `.json`, `.txt`, `.xml`), your variant becomes a candidate for **every** file of that extension. The Bayes classifier in particular can pick your variant for unrelated files of that extension — this WILL break the `test_detect_accuracy` library test.
+- Prefer to either (a) claim the base language's extensions (e.g., `.vba` for a VBA+ variant) so routing stays within that base, or (b) claim no extensions at all and rely on the classifier alone for extension-less files.
+- If your training samples have an extension that the variant doesn't claim, the test will flag them as misclassified by `Extension(<otherlang>)`. Either claim that extension or rename the samples.
+
+### Watch out for fallback heuristics that shortcut the classifier
+
+Some base extensions have a no-pattern fallback rule in `heuristics.yml` (e.g., `.vba` → `VBA`). The heuristics stage runs **before** the classifier, so a fallback like that will catch every file of that extension and return the base language — your variant samples never reach the classifier and the `test_detect_accuracy` test fails with `Heuristics("Base")` errors.
+
+Fix: add a more-specific rule for your variant BEFORE the fallback. Example for VBA+JSONPacked under `.vba`:
+
+```yaml
+- extensions: ['.vba']
+  rules:
+  - language: Vim script
+    pattern: '^UseVimball'
+  - language: VBA+JSONPacked
+    pattern: '^\s*\{\s*"[^"]+"\s*:\s*"Attribute\s+VB_Name\s*='
+  - language: VBA   # fallback stays last
+```
+
+Heuristic patterns are PCRE2 against the file head. Prefer anchored patterns (`^...`) and make them specific enough that base-language files don't match. If you can't write a clean structural pattern for the variant, the fallback alternative is to give your training samples no extension at all — that bypasses the extension router and heuristic stage entirely, letting the classifier decide and the accuracy test pass.
 
 ### Retrain and rebuild
 
