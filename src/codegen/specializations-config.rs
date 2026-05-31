@@ -8,5 +8,5 @@ pub(crate) struct SpecializationRule {
 
 pub(crate) static SPECIALIZATIONS: &[SpecializationRule] = &[
     SpecializationRule { variant: "VBScript+HTMLDecoy", base: None, pattern: "(?i)^\\s*'<!DOCTYPE\\s+html" },
-    SpecializationRule { variant: "HTA", base: Some("HTML"), pattern: "(?i)<HTA:APPLICATION\\b" },
+    SpecializationRule { variant: "HTA", base: None, pattern: "(?i)<HTA:APPLICATION\\b" },
 ];

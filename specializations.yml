@@ -24,8 +24,10 @@
   pattern: '(?i)^\s*''<!DOCTYPE\s+html'
 
 - variant: HTA
-  base: HTML
-  # Base-conditional: <HTA:APPLICATION> could conceivably appear in a string
-  # in unrelated code, so condition on the classifier having already chosen
-  # HTML as the base.
+  # Marker-authoritative: <HTA:APPLICATION> is a vendor-prefixed XML
+  # namespace tag introduced by IE's HTML Application Host. It essentially
+  # never appears in non-HTA content in practice, so we fire regardless of
+  # what the classifier picked — many "HTML + extras" centroids
+  # (HTML+Django, HTML+Razor, Handlebars, Tea, …) can outscore HTML for
+  # bare-head HTA fragments that lack a leading <html> or <!DOCTYPE>.
   pattern: '(?i)<HTA:APPLICATION\b'

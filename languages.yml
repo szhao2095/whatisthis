@@ -2157,18 +2157,6 @@ Haml:
   codemirror_mode: haml
   codemirror_mime_type: text/x-haml
   language_id: 154
-Handlebars:
-  type: markup
-  group: HTML
-  aliases:
-  - hbs
-  - htmlbars
-  extensions:
-  - ".handlebars"
-  - ".hbs"
-  tm_scope: text.html.handlebars
-  ace_mode: handlebars
-  language_id: 155
 Harbour:
   type: programming
   color: "#0e60e3"

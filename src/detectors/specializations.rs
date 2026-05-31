@@ -101,11 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn non_html_languages_pass_through_for_base_conditional() {
-        // <HTA:APPLICATION> in non-HTML content shouldn't trigger HTA upgrade.
-        let s = "<HTA:APPLICATION /> doesn't matter, we're not HTML";
-        assert_eq!(apply_specialization("Rust", s), "Rust");
-        assert_eq!(apply_specialization("VBScript", s), "VBScript");
+    fn hta_application_marker_fires_regardless_of_base() {
+        // <HTA:APPLICATION> is a vendor-prefixed namespace tag essentially
+        // unique to HTA. The rule is marker-authoritative, so it upgrades
+        // even when the classifier picked something other than HTML.
+        let s = "<head><HTA:APPLICATION /></head>";
+        assert_eq!(apply_specialization("HTML+Django", s), "HTA");
+        assert_eq!(apply_specialization("Handlebars", s), "HTA");
+        assert_eq!(apply_specialization("Tea", s), "HTA");
     }
 
     #[test]
