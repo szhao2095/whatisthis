@@ -191,10 +191,13 @@ pub fn detect(path: &Path) -> Result<Option<Detection>, std::io::Error> {
 
     match candidates.len() {
         0 => Ok(None),
-        1 => Ok(Some(Detection::Heuristics(candidates[0]))),
-        _ => Ok(Some(Detection::Classifier(detectors::classify(
+        1 => Ok(Some(Detection::Heuristics(detectors::apply_specialization(
+            candidates[0],
             &content,
-            &candidates,
+        )))),
+        _ => Ok(Some(Detection::Classifier(detectors::apply_specialization(
+            detectors::classify(&content, &candidates),
+            &content,
         )))),
     }
 }

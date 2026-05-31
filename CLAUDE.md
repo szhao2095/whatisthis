@@ -12,6 +12,26 @@ The canonical Ruby reference implementation is checked out at `~/tests/linguist`
 | `whatis` | `src/bin/whatis.rs` | Per-file detection added in this fork. Shows every file's detected language including Data/Prose. Strategy flags `-f/-e/-s/-r/-c` toggle filename/extension/shebang/heuristics/classifier. `--tficf` selects the new TF-ICF classifier instead of naive Bayes. No flags = full default pipeline. |
 | `codegen` | `src/bin/codegen.rs` | Regenerates everything under `src/codegen/` from `languages.yml`, `heuristics.yml`, and `samples/`. **Run this whenever you change samples or YAML config.** |
 
+## Specializations (layered detection)
+
+`src/detectors/specializations.rs` runs after the classifier (and after heuristics/extension paths) to upgrade certain detections. The idea: variants whose distinguishing feature is a **marker** (regex on file head) belong in a layer above the classifier, not as sibling centroids. Modelling them as flat centroids causes centroid overlap — the variant's training corpus is structurally a superset of its base (e.g. "HTML + extras"), so real base-language files get pulled toward the variant by cosine similarity.
+
+Two kinds of rules:
+
+* **Base-conditional** — only fire when the prior stage chose a specific base. Use when the marker could plausibly appear in unrelated content (string literals, comments). The classifier verdict is the safety net.
+* **Marker-authoritative** — fire regardless of prior stage because the marker at offset 0 is unique to the variant (no normal file would naturally produce it). Effectively a miniature magic-byte stage layered on top of the classifier.
+
+Currently active:
+
+| Variant | Rule kind | Marker |
+|---|---|---|
+| `HTA` (specialization of HTML) | base-conditional on HTML | `(?i)<HTA:APPLICATION\b` |
+| `VBScript+HTMLDecoy` | marker-authoritative | `(?i)^\s*'<!DOCTYPE\s+html` |
+
+Specialized variants keep their entry in `languages.yml` (for the `Language` info struct, color, id, etc.) but their `samples/<Variant>/` directory is **deleted** — they have no classifier centroid. The specialization rule is the only path back to the variant.
+
+Rule of thumb: **if a variant's distinguishing feature is a regex marker, layer it. If it's a token *distribution* shape (JSFuck brackets, LongIdent 2000-char names, CharCodeSubtract arithmetic, JSONPacked structure, URIEncoded body), keep it as a flat centroid.**
+
 ## Two classifiers
 
 Both are wired into the same detection pipeline; the difference is which one fires when extension/shebang/heuristics fail to disambiguate:

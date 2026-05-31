@@ -8,7 +8,7 @@ use std::{
 use clap::{App, Arg};
 use hyperpolyglot::{
     detectors::{
-        classify, classify_tficf, get_extension, get_language_from_filename,
+        apply_specialization, classify, classify_tficf, get_extension, get_language_from_filename,
         get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
     },
     Detection,
@@ -181,16 +181,20 @@ fn detect_with(path: &Path, opts: &Strategies) -> io::Result<DetectResult> {
         } else {
             classify(content, &candidates)
         };
+        let lang = apply_specialization(lang, content);
         return Ok(DetectResult::Found(Detection::Classifier(lang)));
     }
 
     Ok(match candidates.len() {
         0 => DetectResult::Unknown,
-        1 => DetectResult::Found(match last_stage {
-            LastStage::Heuristics => Detection::Heuristics(candidates[0]),
-            LastStage::Shebang => Detection::Shebang(candidates[0]),
-            LastStage::Extension | LastStage::None => Detection::Extension(candidates[0]),
-        }),
+        1 => {
+            let lang = apply_specialization(candidates[0], content);
+            DetectResult::Found(match last_stage {
+                LastStage::Heuristics => Detection::Heuristics(lang),
+                LastStage::Shebang => Detection::Shebang(lang),
+                LastStage::Extension | LastStage::None => Detection::Extension(lang),
+            })
+        }
         _ => DetectResult::Ambiguous(candidates),
     })
 }

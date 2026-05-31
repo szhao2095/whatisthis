@@ -35,7 +35,28 @@ For every mis-classified file, decide which bucket it belongs to:
 
 1. **Base type** (no variant needed) — file is plain, classifier is just confused. Cause is usually weak base-corpus coverage of that sub-style.
 2. **An existing variant** — file matches a known technique already in `samples/Base+Variant/`. Just need more training samples in that bucket.
-3. **A new variant** — file uses a technique not currently modelled. Need a new `Base+Variant` class.
+3. **A new flat-centroid variant** — file uses a technique whose **token distribution** is genuinely different from the base (e.g. JSFuck brackets, very long identifiers, dense URI-encoded body). Distribution-based detection in the classifier handles this well.
+4. **A new layered specialization** — file is "base + marker": its overall shape is a base language (HTML, JSON, Batchfile…) with a small distinctive marker that no normal file of the base would produce (e.g. `<HTA:APPLICATION>` in HTML, `'<!DOCTYPE html` at the start of a VBScript decoy, leading `start /MIN %ComSpec% \^…`). This is **NOT** a centroid — see "Layered specializations" below.
+
+### When to choose flat vs layered
+
+The pull: **any "base + extra-stuff" variant kept as a flat centroid will have a centroid whose weight concentrates on the base's own tag/keyword tokens** (because training samples include them). Real base-language files become subsets of that centroid's shape and get poached. This is the root cause of every "real HTML keeps misdetecting" loop.
+
+Rule of thumb:
+
+| Distinguishing feature | Right choice |
+|---|---|
+| Regex marker at file head (or any unambiguous position) | **Layered specialization** |
+| Whole-file token distribution differs sharply from base | **Flat centroid** |
+| Both apply | Layered usually wins — it's more robust against future variants in the same family |
+
+Surface the decision to the user as a table:
+
+| Group | Files | Current detection | Decision |
+|---|---|---|---|
+| A. <short signature> | <count> | <detected as> | NEW flat variant `Base+Foo` |
+| B. <short signature> | <count> | <detected as> | NEW layered specialization `Base+Bar` |
+| C. <short signature> | <count> | <detected as> | EXTEND `Base+Baz` |
 
 How to decide between (2) and (3): inspect the actual token shapes (long identifiers, hex literals, `\x..` escapes, `String.fromCharCode(...)`, `eval(atob(...))`, etc.) and compare to the existing variant samples in `samples/Base+*`. Cluster files that share the same structural signature. If the signature matches an existing variant *technique*, it's (2); if it's a different decoder/encoder altogether, it's (3).
 
@@ -97,6 +118,19 @@ Find a fresh `language_id` by `grep "language_id: 900" languages.yml | sort -t: 
 - If you claim a common extension (e.g., `.json`, `.txt`, `.xml`), your variant becomes a candidate for **every** file of that extension. The Bayes classifier in particular can pick your variant for unrelated files of that extension — this WILL break the `test_detect_accuracy` library test.
 - Prefer to either (a) claim the base language's extensions (e.g., `.vba` for a VBA+ variant) so routing stays within that base, or (b) claim no extensions at all and rely on the classifier alone for extension-less files.
 - If your training samples have an extension that the variant doesn't claim, the test will flag them as misclassified by `Extension(<otherlang>)`. Either claim that extension or rename the samples.
+
+### Layered specializations
+
+For a layered variant, **don't add training samples** — add a rule instead.
+
+1. Register the variant in `languages.yml` exactly as for a flat variant (type, group, color, language_id, optional extensions). The rule needs a `Language` info entry to return.
+2. **Do not create `samples/Base+Variant/`.** Skipping it means the codegen builds no classifier centroid for the variant, which is the point — the centroid would poach base-language files.
+3. Add the rule in `src/detectors/specializations.rs::apply_specialization()`:
+   - Add a `lazy_static!` `Regex` for the marker.
+   - Choose **base-conditional** (`if language == "Base"`) when the marker could plausibly appear in unrelated content.
+   - Choose **marker-authoritative** (no language check) when the marker at offset 0 is uniquely the variant's signature.
+4. Add unit tests covering: positive match upgrades, plain-base file is untouched, non-base languages pass through (or are upgraded, for marker-authoritative).
+5. No codegen needed — just `cargo build --release --bin whatis`.
 
 ### Watch out for fallback heuristics that shortcut the classifier
 
