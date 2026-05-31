@@ -427,6 +427,15 @@ Batchfile:
   ace_mode: batchfile
   color: "#C1F12E"
   language_id: 29
+Batchfile+CaretObfuscated:
+  type: programming
+  tm_scope: source.batchfile
+  group: Batchfile
+  color: "#C1F12E"
+  extensions:
+  - ".bat"
+  - ".cmd"
+  language_id: 900400
 Befunge:
   type: programming
   extensions:

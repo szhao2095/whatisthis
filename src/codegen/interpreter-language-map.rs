@@ -33,7 +33,7 @@ static INTERPRETERS: phf::Map<&'static str, &[&str]> =
         ("sed", &["sed"]),
         ("escript", &["Erlang"]),
         ("ecl", &["Common Lisp"]),
-        ("parrot", &["Parrot Assembly", "Parrot Internal Representation"]),
+        ("parrot", &["Parrot Internal Representation", "Parrot Assembly"]),
         ("php", &["PHP"]),
         ("pike", &["Pike"]),
         ("cperl", &["Perl"]),

