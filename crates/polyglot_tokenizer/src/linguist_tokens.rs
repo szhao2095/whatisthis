@@ -1,6 +1,16 @@
 use crate::tokenizer::{Token, Tokenizer};
 use std::borrow::Cow;
 
+/// Times an `OPENER<?…>` pseudo-token is emitted at the start of a file that
+/// begins with a recognised marker. The repetition exists to saturate the
+/// classifier's term-frequency machinery so the opener dominates L2
+/// normalisation (TF-ICF) or weighs heavily in the per-token log-prob sum
+/// (Bayes). Set to `TFICF_TF_CAP` (100) — emitting more is silently capped.
+///
+/// TODO: replace with a per-token weight in the classifier so we don't need
+/// to physically push 100 entries through the Vec/iterator.
+pub(crate) const OPENER_EMIT_COUNT: usize = 100;
+
 /// Emit Linguist-style tokens for classifier training/inference.
 ///
 /// Returns `Vec<Cow<'a, str>>` to avoid allocating for the common case where
@@ -36,6 +46,8 @@ pub fn get_linguist_tokens<'a>(content: &'a str) -> Vec<Cow<'a, str>> {
     let content_base = content.as_ptr() as usize;
     let token_pos = |s: &str| -> usize { s.as_ptr() as usize - content_base };
 
+    let opener = detect_opener(content);
+
     let raw: Vec<(Token<'a>, usize)> = Tokenizer::new(content)
         .tokens()
         .map(|t| {
@@ -51,7 +63,18 @@ pub fn get_linguist_tokens<'a>(content: &'a str) -> Vec<Cow<'a, str>> {
 
     let first_newline = content.find('\n').unwrap_or(content.len());
 
-    let mut out: Vec<Cow<'a, str>> = Vec::with_capacity(raw.len());
+    // OPENER tokens are emitted many times to saturate the per-document TF cap
+    // (TFICF_TF_CAP = 100). A single emission is washed out by L2 normalisation
+    // when the rest of the file is dominated by another language's tokens
+    // (e.g. PHP webshells whose body is mostly embedded HTML/JS). Saturating
+    // the cap makes the marker a high-weight feature that cosine similarity
+    // against the language centroid can latch onto.
+    let mut out: Vec<Cow<'a, str>> = Vec::with_capacity(raw.len() + OPENER_EMIT_COUNT);
+    if let Some(tok) = opener {
+        for _ in 0..OPENER_EMIT_COUNT {
+            out.push(Cow::Borrowed(tok));
+        }
+    }
     let mut i = 0;
     while i < raw.len() {
         let (t, pos) = (&raw[i].0, raw[i].1);
@@ -130,6 +153,32 @@ pub fn get_linguist_tokens<'a>(content: &'a str) -> Vec<Cow<'a, str>> {
     }
 
     out
+}
+
+/// Recognise a small set of unambiguous, position-anchored file openers at
+/// offset 0 and emit a synthetic `OPENER<marker>` pseudo-token. These give
+/// the classifier a single high-ICF feature for cases where the rest of the
+/// file is dominated by another language (e.g. PHP webshells that are
+/// mostly embedded HTML/JS by token count).
+///
+/// Only a UTF-8 BOM is tolerated before the opener; otherwise it must be at
+/// the very first byte. Matches are exact (case-sensitive) so that legit
+/// content can't accidentally trip the marker.
+///
+/// Shared between `get_linguist_tokens` (TF-ICF path) and `get_key_tokens`
+/// (Bayes path) so that both classifiers see the same opener signal.
+pub(crate) fn detect_opener(content: &str) -> Option<&'static str> {
+    let s = content.strip_prefix('\u{feff}').unwrap_or(content);
+    if s.starts_with("<?php") {
+        return Some("OPENER<?php");
+    }
+    if s.starts_with("<?hh") {
+        return Some("OPENER<?hh");
+    }
+    if s.starts_with("<?xml") {
+        return Some("OPENER<?xml");
+    }
+    None
 }
 
 fn line_comment_token(opener: &str, starts_with_bang: bool) -> Cow<'static, str> {
@@ -409,6 +458,30 @@ mod tests {
             "pure-digit string should not get STRING:BASE64, got {:?}",
             toks
         );
+    }
+
+    #[test]
+    fn opener_php_at_offset_0() {
+        let toks = get_linguist_tokens("<?php\necho 1;\n");
+        assert_eq!(&*toks[0], "OPENER<?php");
+    }
+
+    #[test]
+    fn opener_php_with_bom() {
+        let toks = get_linguist_tokens("\u{feff}<?php\necho 1;\n");
+        assert_eq!(&*toks[0], "OPENER<?php");
+    }
+
+    #[test]
+    fn opener_not_at_offset_0_does_not_match() {
+        let toks = get_linguist_tokens("// comment\n<?php\necho 1;\n");
+        assert!(!contains(&toks, "OPENER<?php"));
+    }
+
+    #[test]
+    fn opener_xml() {
+        let toks = get_linguist_tokens("<?xml version=\"1.0\"?>\n<root/>");
+        assert_eq!(&*toks[0], "OPENER<?xml");
     }
 
     #[test]

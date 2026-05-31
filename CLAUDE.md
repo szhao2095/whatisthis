@@ -95,6 +95,12 @@ No `build.rs` triggers codegen automatically — you must run it manually after 
 - **`#var` sigil combining is impossible** because the base tokenizer commits `#` to line-comment parsing. `@var`, `$var`, `.bar` work.
 - **`MAX_TOKEN_BYTES = 32`** filters out tokens longer than 32 bytes at both training and classification time. Brackets `()[]{}` are intentionally never coalesced in the linguist tokenizer — without this exception, JSFuck-style bracket-heavy input would collapse into one giant token that the cap silently discards.
 - **`whatis` takes only one PATH argument** (not multiple). Glob/expand in the shell instead.
+- **`OPENER<?php` / `<?hh` / `<?xml` synthetic tokens** are emitted 100 times when the file starts with the matching marker (after an optional BOM). Both `get_linguist_tokens` (TF-ICF) and `get_key_tokens` (Bayes) share the same `detect_opener()` and `OPENER_EMIT_COUNT` so both classifiers see the same opener signal. The repetition saturates `TFICF_TF_CAP = 100` for TF-ICF and dominates the per-token log-prob sum for Bayes.
+
+## TODO / future improvements
+
+- **Per-token predefined weights instead of repeated emission.** Today `get_linguist_tokens` emits each `OPENER<?…>` pseudo-token 100× to saturate `TFICF_TF_CAP` and dominate L2 normalization. It works but is a hack: it wastes Vec capacity and bakes the boost into the tokenizer rather than the classifier. A cleaner design: have the tokenizer emit OPENER once, and let the TF-ICF trainer/scorer multiply selected tokens by a configurable per-token weight (e.g. `OPENER_WEIGHT_MULTIPLIER = 100`) at TF computation time. Same effect, no repetition, easier to tune per-marker. Same applies if/when we add other anchored-position pseudo-tokens (`OPENER<%@`, `OPENER<!DOCTYPE`, magic-byte markers, etc.).
+- **Modeline / magic-byte stage in the detection pipeline.** Linguist Ruby runs `Strategy::Modeline` before the classifier on every file regardless of extension, catching unambiguous openers (`<?php`, `<?xml`, shebangs, vim/emacs modelines). The Rust port has no equivalent; extension-less files with strong openers currently rely on the classifier (now propped up by `OPENER<?…>` pseudo-tokens — see above). A proper modeline strategy would obsolete that hack for these cases.
 
 ## Reference: project memory
 
