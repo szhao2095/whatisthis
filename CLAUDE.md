@@ -16,10 +16,18 @@ The canonical Ruby reference implementation is checked out at `~/tests/linguist`
 
 `src/detectors/specializations.rs` runs after the classifier (and after heuristics/extension paths) to upgrade certain detections. The idea: variants whose distinguishing feature is a **marker** (regex on file head) belong in a layer above the classifier, not as sibling centroids. Modelling them as flat centroids causes centroid overlap — the variant's training corpus is structurally a superset of its base (e.g. "HTML + extras"), so real base-language files get pulled toward the variant by cosine similarity.
 
+**Rules live in `specializations.yml`** at the repo root and are compiled into `src/codegen/specializations-config.rs` by `cargo run --bin codegen`. Adding a specialization is a YAML edit + codegen + rebuild — no Rust source changes required. Each YAML entry has:
+
+```yaml
+- variant: VariantName     # must exist in languages.yml
+  base: BaseName           # optional; omit for marker-authoritative
+  pattern: 'PCRE2 regex'   # validated at codegen time
+```
+
 Two kinds of rules:
 
-* **Base-conditional** — only fire when the prior stage chose a specific base. Use when the marker could plausibly appear in unrelated content (string literals, comments). The classifier verdict is the safety net.
-* **Marker-authoritative** — fire regardless of prior stage because the marker at offset 0 is unique to the variant (no normal file would naturally produce it). Effectively a miniature magic-byte stage layered on top of the classifier.
+* **Base-conditional** (`base:` set) — only fire when the prior stage chose that base. Use when the marker could plausibly appear in unrelated content (string literals, comments). The classifier verdict is the safety net.
+* **Marker-authoritative** (no `base:`) — fire regardless of prior stage because the marker at offset 0 is unique to the variant (no normal file would naturally produce it). Effectively a miniature magic-byte stage layered on top of the classifier. Always checked before base-conditional rules.
 
 Currently active:
 
@@ -29,6 +37,8 @@ Currently active:
 | `VBScript+HTMLDecoy` | marker-authoritative | `(?i)^\s*'<!DOCTYPE\s+html` |
 
 Specialized variants keep their entry in `languages.yml` (for the `Language` info struct, color, id, etc.) but their `samples/<Variant>/` directory is **deleted** — they have no classifier centroid. The specialization rule is the only path back to the variant.
+
+Codegen validates each rule at build time: every `variant`/`base` must be defined in `languages.yml`, and every `pattern` must compile as PCRE2. Typos fail the build, not a later run.
 
 Rule of thumb: **if a variant's distinguishing feature is a regex marker, layer it. If it's a token *distribution* shape (JSFuck brackets, LongIdent 2000-char names, CharCodeSubtract arithmetic, JSONPacked structure, URIEncoded body), keep it as a flat centroid.**
 
@@ -95,6 +105,7 @@ crates/polyglot_tokenizer/
   src/linguist_tokens.rs       Linguist-style post-processor: typed COMMENT/SHEBANG, multi-char ops, sigil idents
 
 languages.yml, heuristics.yml, documentation.yml, vendor.yml   shared with Linguist; serve as codegen input
+specializations.yml            project-local; layered post-classifier rules (see "Specializations" above)
 samples/                       per-language training corpora; subdirectory name = label
 ```
 

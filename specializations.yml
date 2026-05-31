@@ -1,0 +1,31 @@
+# Layered post-classifier specializations. See CLAUDE.md
+# "Specializations (layered detection)" for the architecture, and
+# src/detectors/specializations.rs for the runtime that applies these rules.
+#
+# Each rule has:
+#   variant   – the language name to upgrade to (must exist in languages.yml).
+#               Its samples/<variant>/ directory should be empty/missing so the
+#               classifier never returns it directly.
+#   pattern   – a PCRE2 regex applied to the first HEAD_BYTES (8 KB) of the file.
+#   base      – (optional) only fire when the prior detection stage chose this
+#               language. Use base-conditional when the marker could plausibly
+#               appear in unrelated content (string literals, comments). Omit
+#               for marker-authoritative rules whose offset-0 marker is unique
+#               to the variant; those fire regardless of prior detection.
+#
+# Marker-authoritative rules are checked first at runtime, so they take
+# priority over base-conditional ones.
+
+- variant: VBScript+HTMLDecoy
+  # Marker-authoritative: file starts with an apostrophe-prefixed DOCTYPE.
+  # The actual code is base64-chunked VBScript; every HTML-looking line at
+  # the top is commented out with `'` so the file inspects as HTML by
+  # simple sniffing while real execution stays VBScript.
+  pattern: '(?i)^\s*''<!DOCTYPE\s+html'
+
+- variant: HTA
+  base: HTML
+  # Base-conditional: <HTA:APPLICATION> could conceivably appear in a string
+  # in unrelated code, so condition on the classifier having already chosen
+  # HTML as the base.
+  pattern: '(?i)<HTA:APPLICATION\b'

@@ -124,13 +124,19 @@ Find a fresh `language_id` by `grep "language_id: 900" languages.yml | sort -t: 
 For a layered variant, **don't add training samples** — add a rule instead.
 
 1. Register the variant in `languages.yml` exactly as for a flat variant (type, group, color, language_id, optional extensions). The rule needs a `Language` info entry to return.
-2. **Do not create `samples/Base+Variant/`.** Skipping it means the codegen builds no classifier centroid for the variant, which is the point — the centroid would poach base-language files.
-3. Add the rule in `src/detectors/specializations.rs::apply_specialization()`:
-   - Add a `lazy_static!` `Regex` for the marker.
-   - Choose **base-conditional** (`if language == "Base"`) when the marker could plausibly appear in unrelated content.
-   - Choose **marker-authoritative** (no language check) when the marker at offset 0 is uniquely the variant's signature.
-4. Add unit tests covering: positive match upgrades, plain-base file is untouched, non-base languages pass through (or are upgraded, for marker-authoritative).
-5. No codegen needed — just `cargo build --release --bin whatis`.
+2. **Do not create `samples/Base+Variant/`.** Skipping it means codegen builds no classifier centroid for the variant, which is the point — the centroid would poach base-language files.
+3. Add the rule to `specializations.yml` at the repo root:
+   ```yaml
+   - variant: Base+Variant         # must match the languages.yml name
+     base: Base                    # OMIT for marker-authoritative rules
+     pattern: '(?i)<your marker>'  # PCRE2; validated at codegen time
+   ```
+   - **Base-conditional** (`base:` set): the rule only fires when the prior stage chose that base. Use when the marker could plausibly appear in unrelated content.
+   - **Marker-authoritative** (no `base:`): fires regardless of prior stage. Use when the offset-0 marker is uniquely the variant's signature.
+4. Add unit tests in `src/detectors/specializations.rs::tests` covering positive match, plain-base file untouched, and cross-base behavior.
+5. Run `cargo run --release --bin codegen` (compiles + validates patterns, writes `src/codegen/specializations-config.rs`), then `cargo build --release --bin whatis`.
+
+Codegen catches typos (unknown variant/base names, invalid regex) at build time — typos fail there, not at runtime.
 
 ### Watch out for fallback heuristics that shortcut the classifier
 
