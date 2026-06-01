@@ -36,6 +36,10 @@ struct Strategies {
     classifier: bool,
     use_tficf: bool,
     chunked: bool,
+    /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
+    /// sampling to *tiling* mode: break the file into consecutive chunks of
+    /// this many bytes and print a verdict for each.
+    tile_chunk_size: Option<usize>,
 }
 
 impl Strategies {
@@ -61,13 +65,21 @@ fn main() {
         .arg(Arg::with_name("classifier").short("c").long("classifier").help("Use Bayesian token classifier"))
         .arg(Arg::with_name("tficf").long("tficf").help("When the classifier strategy fires, use the TF-ICF cosine-similarity classifier instead of the default naive Bayes one"))
         .arg(Arg::with_name("chunked").long("chunked").help("Profile mode: for files > 150 KB, classify top / middle / bottom 50 KB chunks separately and print one verdict per chunk. Useful for files with mixed content or padding-decoy obfuscation. Smaller files keep the default single-verdict output."))
+        .arg(Arg::with_name("chunk-size").long("chunk-size").value_name("SIZE").takes_value(true).help("With --chunked: tile chunks of SIZE bytes across the *entire* file instead of sampling top/middle/bottom. Catches content at any offset. Suffixes accepted: K, M, G (case-insensitive). Implies --chunked. Example: --chunk-size 16K"))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
         .iter()
         .any(|k| matches.is_present(k));
     let use_tficf = matches.is_present("tficf");
-    let chunked = matches.is_present("chunked");
+    let tile_chunk_size = matches.value_of("chunk-size").map(|s| {
+        parse_size(s).unwrap_or_else(|e| {
+            eprintln!("whatis: invalid --chunk-size {:?}: {}", s, e);
+            process::exit(2);
+        })
+    });
+    // --chunk-size implies --chunked
+    let chunked = matches.is_present("chunked") || tile_chunk_size.is_some();
     let opts = if any {
         Strategies {
             filename: matches.is_present("filename"),
@@ -77,6 +89,7 @@ fn main() {
             classifier: matches.is_present("classifier"),
             use_tficf,
             chunked,
+            tile_chunk_size,
         }
     } else {
         Strategies {
@@ -87,6 +100,7 @@ fn main() {
             classifier: true,
             use_tficf,
             chunked,
+            tile_chunk_size,
         }
     };
 
@@ -131,12 +145,22 @@ fn print_result(path: &Path, opts: &Strategies) {
     println!("{}: {}", path.display(), label);
 }
 
-/// 3-chunk profile output. Returns `Ok(true)` if chunked output was emitted,
-/// `Ok(false)` if the file is below the threshold and the caller should fall
-/// back to single-verdict output, or `Err` if I/O failed.
+/// Chunked profile output. Two modes:
+///
+/// * If `opts.tile_chunk_size` is `None`: 3-chunk sample at top / middle /
+///   bottom (each `CHUNK_SIZE` bytes). Triggers only for files larger than
+///   `CHUNKED_THRESHOLD`; smaller files print single-verdict via fallback.
+///
+/// * If `opts.tile_chunk_size` is `Some(SIZE)`: tile consecutive `SIZE`-byte
+///   chunks across the *entire* file. Covers every offset; useful for files
+///   where interesting content might be at any position.
+///
+/// Returns `Ok(true)` if chunked output was emitted, `Ok(false)` if the
+/// file is below the threshold (3-chunk mode only — tiling mode always
+/// emits regardless of size), or `Err` if I/O failed.
 fn print_chunked_result(path: &Path, opts: &Strategies) -> io::Result<bool> {
     let size = std::fs::metadata(path)?.len() as usize;
-    if size <= CHUNKED_THRESHOLD {
+    if opts.tile_chunk_size.is_none() && size <= CHUNKED_THRESHOLD {
         return Ok(false);
     }
 
@@ -151,6 +175,30 @@ fn print_chunked_result(path: &Path, opts: &Strategies) -> io::Result<bool> {
 
     let mut file = File::open(path)?;
 
+    if let Some(tile_size) = opts.tile_chunk_size {
+        // Tiling mode: walk the file in chunks of tile_size bytes.
+        println!("{}:", path.display());
+        let mut offset = 0usize;
+        let mut idx = 0;
+        while offset < size {
+            let len = tile_size.min(size - offset);
+            let content = read_chunk_at(&mut file, offset, len)?;
+            let det = classify_chunk(&content, opts, &candidates);
+            println!(
+                "  [{:>4}] {:>8}..{:<8} ({:>5} B)  {}",
+                idx,
+                offset,
+                offset + len,
+                len,
+                det
+            );
+            offset += len;
+            idx += 1;
+        }
+        return Ok(true);
+    }
+
+    // Default 3-chunk top / middle / bottom mode.
     let top = read_chunk_at(&mut file, 0, CHUNK_SIZE)?;
     let mid_start = (size - CHUNK_SIZE) / 2;
     let mid = read_chunk_at(&mut file, mid_start, CHUNK_SIZE)?;
@@ -167,6 +215,29 @@ fn print_chunked_result(path: &Path, opts: &Strategies) -> io::Result<bool> {
     println!("  [bottom] {}", bot_det);
 
     Ok(true)
+}
+
+/// Parse a size string like `4096`, `16K`, `1M`, `2G` (case-insensitive).
+fn parse_size(s: &str) -> Result<usize, String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err("empty".to_string());
+    }
+    let (num_str, mult) = match trimmed.chars().last().unwrap().to_ascii_uppercase() {
+        'K' => (&trimmed[..trimmed.len() - 1], 1024usize),
+        'M' => (&trimmed[..trimmed.len() - 1], 1024 * 1024),
+        'G' => (&trimmed[..trimmed.len() - 1], 1024 * 1024 * 1024),
+        c if c.is_ascii_digit() => (trimmed, 1),
+        c => return Err(format!("unrecognized suffix {:?}", c)),
+    };
+    let n: usize = num_str
+        .trim()
+        .parse()
+        .map_err(|e| format!("not a number: {}", e))?;
+    if n == 0 {
+        return Err("must be > 0".to_string());
+    }
+    Ok(n.saturating_mul(mult))
 }
 
 /// Run the classifier (+ specialization) on a single chunk. Skips the
