@@ -9,13 +9,7 @@ include!("../codegen/languages.rs");
 const MAX_TOKEN_BYTES: usize = 32;
 const DEFAULT_LOG_PROB: f64 = -19f64;
 
-#[derive(Debug)]
-pub struct LanguageScore {
-    language: &'static str,
-    score: f64,
-}
-
-pub fn classify(content: &str, candidates: &[&'static str]) -> &'static str {
+pub fn classify_scored(content: &str, candidates: &[&'static str]) -> Vec<(&'static str, f64)> {
     let candidates = match candidates.len() {
         0 => LANGUAGES,
         _ => candidates,
@@ -25,7 +19,7 @@ pub fn classify(content: &str, candidates: &[&'static str]) -> &'static str {
         .filter(|token| token.len() <= MAX_TOKEN_BYTES)
         .collect();
 
-    let mut scored_candidates: Vec<LanguageScore> = candidates
+    let mut scored: Vec<(&'static str, f64)> = candidates
         .iter()
         .map(|language| {
             let score = match TOKEN_LOG_PROBABILITIES.get(language) {
@@ -35,17 +29,16 @@ pub fn classify(content: &str, candidates: &[&'static str]) -> &'static str {
                     .sum(),
                 None => std::f64::NEG_INFINITY,
             };
-            LanguageScore { language, score }
+            (*language, score)
         })
         .collect();
 
-    scored_candidates.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored
+}
 
-    scored_candidates[0].language
+pub fn classify(content: &str, candidates: &[&'static str]) -> &'static str {
+    classify_scored(content, candidates)[0].0
 }
 
 #[cfg(test)]
@@ -100,5 +93,23 @@ mod tests {
         let candidates = vec![];
         let language = classify(content.as_str(), &candidates);
         assert_eq!(language, "F*");
+    }
+
+    #[test]
+    fn test_classify_scored_order() {
+        let content = fs::read_to_string("samples/Rust/main.rs").unwrap();
+        let candidates = vec!["C", "Rust"];
+        let scores = classify_scored(content.as_str(), &candidates);
+        assert_eq!(scores[0].0, "Rust");
+        assert!(scores[0].1 > scores[1].1, "scores must be sorted descending");
+    }
+
+    #[test]
+    fn test_classify_scored_matches_classify() {
+        let content = fs::read_to_string("samples/Erlang/170-os-daemons.es").unwrap();
+        let candidates = vec!["Erlang", "JavaScript"];
+        let winner = classify(content.as_str(), &candidates);
+        let scores = classify_scored(content.as_str(), &candidates);
+        assert_eq!(winner, scores[0].0);
     }
 }

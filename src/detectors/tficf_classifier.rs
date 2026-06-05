@@ -13,7 +13,7 @@ const MAX_TOKEN_BYTES: usize = 32;
 // used at training time in codegen.rs::train_tficf_classifier.
 const TF_CAP: u32 = 100;
 
-pub fn classify_tficf(content: &str, candidates: &[&'static str]) -> &'static str {
+pub fn classify_tficf_scored(content: &str, candidates: &[&'static str]) -> Vec<(&'static str, f64)> {
     let mut counts: HashMap<u32, u32> = HashMap::with_capacity(content.len() / 8);
     for token in polyglot_tokenizer::get_linguist_tokens(content) {
         if token.len() > MAX_TOKEN_BYTES {
@@ -40,35 +40,54 @@ pub fn classify_tficf(content: &str, candidates: &[&'static str]) -> &'static st
     }
     query.sort_by_key(|x| x.0);
 
-    let mut best_lang: &'static str = "";
-    let mut best_score = f64::NEG_INFINITY;
-    let mut score_one = |lang: &'static str| {
-        if let Some(centroid) = TFICF_CENTROIDS.get(lang) {
-            let score = cosine_dot(&query, centroid);
-            if score > best_score {
-                best_score = score;
-                best_lang = lang;
-            }
-        }
+    let score_lang = |lang: &'static str| -> Option<(&'static str, f64)> {
+        TFICF_CENTROIDS.get(lang).map(|centroid| (lang, cosine_dot(&query, centroid)))
     };
-    if candidates.is_empty() {
-        for &lang in TFICF_CENTROIDS.keys() {
-            score_one(lang);
+
+    let mut scored: Vec<(&'static str, f64)> = if candidates.is_empty() {
+        TFICF_CENTROIDS.keys().filter_map(|&lang| score_lang(lang)).collect()
+    } else {
+        candidates.iter().filter_map(|&lang| score_lang(lang)).collect()
+    };
+
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    if scored.is_empty() {
+        if candidates.is_empty() {
+            vec![("", f64::NEG_INFINITY)]
+        } else {
+            vec![(candidates[0], f64::NEG_INFINITY)]
         }
     } else {
-        for &lang in candidates {
-            score_one(lang);
-        }
+        scored
+    }
+}
+
+pub fn classify_tficf(content: &str, candidates: &[&'static str]) -> &'static str {
+    classify_tficf_scored(content, candidates)[0].0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_classify_tficf_scored_order() {
+        let content = fs::read_to_string("samples/Rust/main.rs").unwrap();
+        let candidates = vec!["C", "Rust"];
+        let scores = classify_tficf_scored(content.as_str(), &candidates);
+        assert_eq!(scores[0].0, "Rust");
+        assert!(scores[0].1 >= scores[1].1, "scores must be sorted descending");
     }
 
-    if best_lang.is_empty() {
-        if candidates.is_empty() {
-            ""
-        } else {
-            candidates[0]
-        }
-    } else {
-        best_lang
+    #[test]
+    fn test_classify_tficf_scored_matches_classify_tficf() {
+        let content = fs::read_to_string("samples/Rust/main.rs").unwrap();
+        let candidates = vec!["C", "Rust"];
+        let winner = classify_tficf(content.as_str(), &candidates);
+        let scores = classify_tficf_scored(content.as_str(), &candidates);
+        assert_eq!(winner, scores[0].0);
     }
 }
 
