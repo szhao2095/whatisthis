@@ -8,9 +8,10 @@ use std::{
 use clap::{App, Arg};
 use hyperpolyglot::{
     detectors::{
-        apply_specialization, byte_stats, classify, classify_tficf, detect_structure,
-        filter_to_majority_family, get_extension, get_language_from_filename,
-        get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
+        apply_specialization, byte_stats, classify, classify_scored, classify_tficf,
+        classify_tficf_scored, detect_structure, filter_to_majority_family, get_extension,
+        get_language_from_filename, get_languages_from_extension, get_languages_from_heuristics,
+        get_languages_from_shebang,
     },
     Detection,
 };
@@ -40,6 +41,10 @@ struct Strategies {
     entropy: bool,
     structure: bool,
     family_first: bool,
+    /// When Some(t), return Unknown if best classifier score < t.
+    unknown_threshold: Option<f64>,
+    /// When > 0.0, return Ambiguous if top two scores differ by less than this.
+    ambiguity_margin: f64,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -73,6 +78,8 @@ fn main() {
         .arg(Arg::with_name("entropy").long("entropy").help("Print byte-level statistics (Shannon entropy, printable ratio, null ratio, hex/base64 density) for each file alongside the language verdict"))
         .arg(Arg::with_name("structure").long("structure").help("Check for binary/container magic bytes before text classification. For hard binary formats (ELF, PE, GZIP, PNG) the text classifier is suppressed and the format is reported directly. For advisory formats (PDF, ZIP, OLE2) the structure hit is shown alongside the text verdict."))
         .arg(Arg::with_name("family-first").long("family-first").help("Before running the classifier, filter the candidate language set to those in the plurality family (WebScript, Shell, Systems, etc.) according to taxonomy.yml. Reduces cross-family confusion when the extension is ambiguous."))
+        .arg(Arg::with_name("unknown-threshold").long("unknown-threshold").value_name("SCORE").takes_value(true).help("When using --tficf, emit <unknown> instead of a forced label if the best cosine similarity score is below SCORE (0.0-1.0). Default: disabled."))
+        .arg(Arg::with_name("ambiguity-margin").long("ambiguity-margin").value_name("DELTA").takes_value(true).help("When using --tficf or the Bayes classifier, emit <ambiguous> if the top two scores differ by less than DELTA. Default: 0.0 (disabled)."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -82,6 +89,15 @@ fn main() {
     let entropy = matches.is_present("entropy");
     let structure = matches.is_present("structure");
     let family_first = matches.is_present("family-first");
+    let unknown_threshold = matches.value_of("unknown-threshold").map(|s| {
+        s.parse::<f64>().unwrap_or_else(|_| {
+            eprintln!("whatis: invalid --unknown-threshold {:?}: must be a float", s);
+            process::exit(2);
+        })
+    });
+    let ambiguity_margin = matches.value_of("ambiguity-margin")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
     let tile_chunk_size = matches.value_of("chunk-size").map(|s| {
         parse_size(s).unwrap_or_else(|e| {
             eprintln!("whatis: invalid --chunk-size {:?}: {}", s, e);
@@ -102,6 +118,8 @@ fn main() {
             entropy,
             structure,
             family_first,
+            unknown_threshold,
+            ambiguity_margin,
             tile_chunk_size,
         }
     } else {
@@ -116,6 +134,8 @@ fn main() {
             entropy,
             structure,
             family_first,
+            unknown_threshold,
+            ambiguity_margin,
             tile_chunk_size,
         }
     };
@@ -419,12 +439,27 @@ fn detect_with(path: &Path, opts: &Strategies) -> io::Result<DetectResult> {
     }
 
     if opts.classifier && candidates.len() != 1 {
-        let lang = if opts.use_tficf {
-            classify_tficf(content, &candidates)
+        let scores = if opts.use_tficf {
+            classify_tficf_scored(content, &candidates)
         } else {
-            classify(content, &candidates)
+            classify_scored(content, &candidates)
         };
-        let lang = apply_specialization(lang, content);
+        // Ambiguity check: top two scores too close to each other.
+        if opts.ambiguity_margin > 0.0 && scores.len() >= 2 {
+            let delta = scores[0].1 - scores[1].1;
+            if delta.abs() < opts.ambiguity_margin {
+                return Ok(DetectResult::Ambiguous(
+                    scores[..2.min(scores.len())].iter().map(|(l, _)| *l).collect(),
+                ));
+            }
+        }
+        // Unknown threshold: best score is too low.
+        if let Some(threshold) = opts.unknown_threshold {
+            if scores[0].1 < threshold {
+                return Ok(DetectResult::Unknown);
+            }
+        }
+        let lang = apply_specialization(scores[0].0, content);
         return Ok(DetectResult::Found(Detection::Classifier(lang)));
     }
 
