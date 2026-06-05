@@ -1,6 +1,7 @@
 mod classifier;
 pub mod ensemble;
 pub mod hmm;
+pub mod lda;
 pub mod mixture;
 pub mod entropy;
 mod extensions;

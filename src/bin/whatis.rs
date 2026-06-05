@@ -6,6 +6,7 @@ use std::{
 };
 
 use clap::{App, Arg};
+use polyglot_tokenizer::get_linguist_tokens;
 use hyperpolyglot::{
     detectors::{
         apply_specialization, byte_stats, classify, classify_linear_scored,
@@ -14,6 +15,7 @@ use hyperpolyglot::{
         filter_to_majority_family, get_extension, get_language_from_filename,
         get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
         hmm::viterbi_smooth,
+        lda::run_lda,
         mixture::em_mixture,
     },
     region_engine::{region_profile, FileVerdict},
@@ -62,6 +64,9 @@ struct Strategies {
     max_labels: usize,
     hmm: bool,
     transition_penalty: f64,
+    lda: bool,
+    lda_topics: usize,
+    lda_iters: usize,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -110,6 +115,9 @@ fn main() {
         .arg(Arg::with_name("max-labels").long("max-labels").value_name("N").takes_value(true).help("Maximum number of labels in --mixture output. Default: 3."))
         .arg(Arg::with_name("hmm").long("hmm").help("Apply Viterbi HMM decoding to the per-region label sequence. Neighboring windows pay a transition penalty for label changes, suppressing single-window noise. Requires windowed scanning (implies --multilabel if neither --mixture nor --multilabel is set)."))
         .arg(Arg::with_name("transition-penalty").long("transition-penalty").value_name("F").takes_value(true).help("Log-space cost for a label change between adjacent windows. Default: 2.0. Higher values = stronger contiguity bias."))
+        .arg(Arg::with_name("lda").long("lda").help("Run unsupervised LDA topic discovery over per-window token bags. Output is topics with top tokens, not language labels. Useful for exploring mixed-content corpora. Implies windowed scanning."))
+        .arg(Arg::with_name("lda-topics").long("lda-topics").value_name("N").takes_value(true).help("Number of LDA topics to discover. Default: 10."))
+        .arg(Arg::with_name("lda-iters").long("lda-iters").value_name("N").takes_value(true).help("Number of variational EM iterations for LDA. Default: 50."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -136,6 +144,9 @@ fn main() {
     let transition_penalty = matches.value_of("transition-penalty")
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(2.0);
+    let lda = matches.is_present("lda");
+    let lda_topics = matches.value_of("lda-topics").and_then(|s| s.parse().ok()).unwrap_or(10);
+    let lda_iters = matches.value_of("lda-iters").and_then(|s| s.parse().ok()).unwrap_or(50);
     let hostile = matches.is_present("hostile");
     let explain_scores = matches.is_present("explain-scores");
     let confidence_mode = match matches.value_of("confidence-mode").unwrap_or("medium") {
@@ -195,6 +206,9 @@ fn main() {
             max_labels,
             hmm,
             transition_penalty,
+            lda,
+            lda_topics,
+            lda_iters,
             tile_chunk_size,
         }
     } else {
@@ -224,6 +238,9 @@ fn main() {
             max_labels,
             hmm,
             transition_penalty,
+            lda,
+            lda_topics,
+            lda_iters,
             tile_chunk_size,
         }
     };
@@ -308,6 +325,46 @@ fn print_hostile_result(path: &Path, opts: &Strategies) {
             println!("  => {}", label);
         } else {
             println!("{}: {}", path.display(), label);
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        println!("{}: <error: {}>", path.display(), e);
+    }
+}
+
+fn print_lda_result(path: &Path, opts: &Strategies) {
+    let result: io::Result<()> = (|| {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+
+        // Tile the file into windows and tokenize each with get_linguist_tokens.
+        let window = opts.window_size;
+        let stride = opts.stride;
+        let total = buf.len();
+        let mut documents: Vec<Vec<(String, u32)>> = Vec::new();
+
+        let mut offset = 0usize;
+        while offset < total {
+            let end = (offset + window).min(total);
+            let text = String::from_utf8_lossy(&buf[offset..end]);
+            let mut counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            for token in get_linguist_tokens(&text) {
+                *counts.entry(token.into_owned()).or_insert(0) += 1;
+            }
+            documents.push(counts.into_iter().collect());
+            if end >= total { break; }
+            offset += stride;
+        }
+
+        let lda_result = run_lda(&documents, opts.lda_topics, opts.lda_iters);
+
+        println!("{}:", path.display());
+        println!("  {} windows, {} topics", documents.len(), lda_result.topics.len());
+        for topic in &lda_result.topics {
+            let tokens: Vec<&str> = topic.top_tokens.iter().map(|(t, _)| t.as_str()).collect();
+            println!("  topic {:>2}: {}", topic.index, tokens.join("  "));
         }
         Ok(())
     })();
@@ -452,6 +509,12 @@ fn print_result(path: &Path, opts: &Strategies) {
     // Hostile-mode ensemble path.
     if opts.hostile {
         print_hostile_result(path, opts);
+        return;
+    }
+
+    // LDA topic discovery path.
+    if opts.lda {
+        print_lda_result(path, opts);
         return;
     }
 
