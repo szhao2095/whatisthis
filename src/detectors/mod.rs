@@ -1,4 +1,5 @@
 mod classifier;
+pub mod entropy;
 mod extensions;
 mod filenames;
 mod heuristics;
@@ -7,6 +8,7 @@ mod specializations;
 mod tficf_classifier;
 
 pub use classifier::{classify, classify_scored};
+pub use entropy::byte_stats;
 pub use extensions::{get_extension, get_languages_from_extension};
 pub use filenames::get_language_from_filename;
 pub use heuristics::get_languages_from_heuristics;

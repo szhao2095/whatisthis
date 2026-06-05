@@ -8,8 +8,9 @@ use std::{
 use clap::{App, Arg};
 use hyperpolyglot::{
     detectors::{
-        apply_specialization, classify, classify_tficf, get_extension, get_language_from_filename,
-        get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
+        apply_specialization, byte_stats, classify, classify_tficf, get_extension,
+        get_language_from_filename, get_languages_from_extension, get_languages_from_heuristics,
+        get_languages_from_shebang,
     },
     Detection,
 };
@@ -36,6 +37,7 @@ struct Strategies {
     classifier: bool,
     use_tficf: bool,
     chunked: bool,
+    entropy: bool,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -44,7 +46,7 @@ struct Strategies {
 
 impl Strategies {
     fn needs_file_read(&self) -> bool {
-        self.shebang || self.heuristics || self.classifier
+        self.shebang || self.heuristics || self.classifier || self.entropy
     }
 }
 
@@ -66,12 +68,14 @@ fn main() {
         .arg(Arg::with_name("tficf").long("tficf").help("When the classifier strategy fires, use the TF-ICF cosine-similarity classifier instead of the default naive Bayes one"))
         .arg(Arg::with_name("chunked").long("chunked").help("Profile mode: for files > 150 KB, classify top / middle / bottom 50 KB chunks separately and print one verdict per chunk. Useful for files with mixed content or padding-decoy obfuscation. Smaller files keep the default single-verdict output."))
         .arg(Arg::with_name("chunk-size").long("chunk-size").value_name("SIZE").takes_value(true).help("With --chunked: tile chunks of SIZE bytes across the *entire* file instead of sampling top/middle/bottom. Catches content at any offset. Suffixes accepted: K, M, G (case-insensitive). Implies --chunked. Example: --chunk-size 16K"))
+        .arg(Arg::with_name("entropy").long("entropy").help("Print byte-level statistics (Shannon entropy, printable ratio, null ratio, hex/base64 density) for each file alongside the language verdict"))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
         .iter()
         .any(|k| matches.is_present(k));
     let use_tficf = matches.is_present("tficf");
+    let entropy = matches.is_present("entropy");
     let tile_chunk_size = matches.value_of("chunk-size").map(|s| {
         parse_size(s).unwrap_or_else(|e| {
             eprintln!("whatis: invalid --chunk-size {:?}: {}", s, e);
@@ -89,6 +93,7 @@ fn main() {
             classifier: matches.is_present("classifier"),
             use_tficf,
             chunked,
+            entropy,
             tile_chunk_size,
         }
     } else {
@@ -100,6 +105,7 @@ fn main() {
             classifier: true,
             use_tficf,
             chunked,
+            entropy,
             tile_chunk_size,
         }
     };
@@ -143,6 +149,29 @@ fn print_result(path: &Path, opts: &Strategies) {
         Err(e) => format!("<error: {}>", e),
     };
     println!("{}: {}", path.display(), label);
+
+    if opts.entropy {
+        print_entropy(path);
+    }
+}
+
+fn print_entropy(path: &Path) {
+    const READ_BYTES: usize = 51200;
+    let result = (|| -> io::Result<()> {
+        let mut file = File::open(path)?;
+        let mut buf = vec![0u8; READ_BYTES];
+        let n = file.read(&mut buf)?;
+        buf.truncate(n);
+        let s = byte_stats(&buf);
+        println!(
+            "  entropy: H={:.2} bits  printable={:.2}  null={:.3}  hex={:.2}  b64={:.2}",
+            s.entropy, s.printable_ratio, s.null_ratio, s.hex_density, s.base64_density
+        );
+        Ok(())
+    })();
+    if let Err(e) = result {
+        println!("  entropy: <error: {}>", e);
+    }
 }
 
 /// Chunked profile output. Two modes:
