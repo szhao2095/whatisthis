@@ -3,7 +3,7 @@ pub mod tokenizer;
 pub use linguist_tokens::get_linguist_tokens;
 pub use tokenizer::{Token, Tokenizer};
 
-use linguist_tokens::{detect_opener, OPENER_EMIT_COUNT};
+use linguist_tokens::{detect_obfuscation, detect_opener, OPENER_EMIT_COUNT};
 
 /// Tokenize the content and return only the identifiers and symbols from the langauge.
 ///
@@ -13,6 +13,9 @@ use linguist_tokens::{detect_opener, OPENER_EMIT_COUNT};
 /// makes the marker dominate the per-token log-probability sum used by the
 /// Bayes scorer in `src/detectors/classifier.rs`. The same trick is applied
 /// in `get_linguist_tokens` for the TF-ICF path so both classifiers agree.
+///
+/// Obfuscation pseudo-tokens (`OBF:JSFUCK`, `OBF:FROMCHARCODE_LONG`, etc.)
+/// are also emitted once each when the corresponding pattern is detected.
 ///
 /// # Examples
 /// ```
@@ -25,9 +28,10 @@ pub fn get_key_tokens(content: &str) -> impl Iterator<Item = &str> {
     let opener_iter = detect_opener(content)
         .into_iter()
         .flat_map(|tok| std::iter::repeat(tok).take(OPENER_EMIT_COUNT));
+    let obf_iter = detect_obfuscation(content).iter().copied();
     let regular = Tokenizer::new(content).tokens().filter_map(|t| match t {
         Token::Ident(t) | Token::Symbol(t) => Some(t),
         _ => None,
     });
-    opener_iter.chain(regular)
+    opener_iter.chain(obf_iter).chain(regular)
 }

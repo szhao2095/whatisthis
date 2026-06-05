@@ -42,6 +42,126 @@ pub(crate) const OPENER_EMIT_COUNT: usize = 100;
 /// rather than `Token::BlockComment`. As a result, `COMMENT/*` and friends
 /// are rarely emitted in practice; line-comment typing (`COMMENT#`,
 /// `COMMENT//`, `COMMENT--`, `COMMENT%`) works as expected.
+/// Scan content for structural obfuscation patterns and return a static
+/// slice of matching pseudo-token names.  Each token is emitted once — the
+/// high ICF weight comes from the tokens being rare in the training corpus,
+/// not from repetition.
+///
+/// These pseudo-tokens are picked up by both the Bayes and TF-ICF trainers
+/// when codegen is run, so they naturally acquire discriminative weights for
+/// obfuscated variants without any changes to the classifier math.
+pub(crate) fn detect_obfuscation(content: &str) -> &'static [&'static str] {
+    // Bitmask: collect which pseudo-tokens fire, then return a pre-built slice.
+    // Using a small array avoids heap allocation; at most 5 tokens fire.
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    if len == 0 {
+        return &[];
+    }
+
+    let mut flags: u8 = 0;
+
+    // OBF:JSFUCK — JSFuck uses only []()!+ to encode any JavaScript.
+    // Fire when those six chars make up ≥ 60% of the content.
+    {
+        let jsfuck_count = bytes.iter().filter(|&&b| matches!(b, b'[' | b']' | b'(' | b')' | b'!' | b'+')).count();
+        if jsfuck_count * 10 >= len * 6 {
+            flags |= 1 << 0;
+        }
+    }
+
+    // OBF:FROMCHARCODE_LONG — String.fromCharCode with ≥8 comma-separated args.
+    // Indicates numeric character-code decoding patterns.
+    if contains_pattern(content, b"String.fromCharCode") && has_long_charcode_call(content) {
+        flags |= 1 << 1;
+    }
+
+    // OBF:PS_ENCODED — PowerShell encoded-command indicators.
+    if contains_pattern_ci(bytes, b"-enc") || contains_pattern_ci(bytes, b"-encodedcommand") || contains_pattern(content, b"FromBase64String") {
+        flags |= 1 << 2;
+    }
+
+    // OBF:BATCH_CARET_HIGH — batch caret-escape density ≥ 5%.
+    {
+        let caret_count = bytes.iter().filter(|&&b| b == b'^').count();
+        if caret_count * 20 >= len {
+            flags |= 1 << 3;
+        }
+    }
+
+    // OBF:HTML_SCRIPT_TAG — <script present beyond offset 0 (not the opener).
+    // Indicates an HTML file with embedded scripts.
+    if content.len() > 7 && contains_pattern_ci(&bytes[1..], b"<script") {
+        flags |= 1 << 4;
+    }
+
+    // Map flags to a static pre-built slice to avoid allocation.
+    match flags {
+        0 => &[],
+        1 => &["OBF:JSFUCK"],
+        2 => &["OBF:FROMCHARCODE_LONG"],
+        3 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG"],
+        4 => &["OBF:PS_ENCODED"],
+        5 => &["OBF:JSFUCK", "OBF:PS_ENCODED"],
+        6 => &["OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED"],
+        7 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED"],
+        8 => &["OBF:BATCH_CARET_HIGH"],
+        9 => &["OBF:JSFUCK", "OBF:BATCH_CARET_HIGH"],
+        10 => &["OBF:FROMCHARCODE_LONG", "OBF:BATCH_CARET_HIGH"],
+        11 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:BATCH_CARET_HIGH"],
+        12 => &["OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH"],
+        13 => &["OBF:JSFUCK", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH"],
+        14 => &["OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH"],
+        15 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH"],
+        16 => &["OBF:HTML_SCRIPT_TAG"],
+        17 => &["OBF:JSFUCK", "OBF:HTML_SCRIPT_TAG"],
+        18 => &["OBF:FROMCHARCODE_LONG", "OBF:HTML_SCRIPT_TAG"],
+        19 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:HTML_SCRIPT_TAG"],
+        20 => &["OBF:PS_ENCODED", "OBF:HTML_SCRIPT_TAG"],
+        21 => &["OBF:JSFUCK", "OBF:PS_ENCODED", "OBF:HTML_SCRIPT_TAG"],
+        22 => &["OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:HTML_SCRIPT_TAG"],
+        23 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:HTML_SCRIPT_TAG"],
+        24 => &["OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        25 => &["OBF:JSFUCK", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        26 => &["OBF:FROMCHARCODE_LONG", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        27 => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        28 => &["OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        29 => &["OBF:JSFUCK", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        30 => &["OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+        _ => &["OBF:JSFUCK", "OBF:FROMCHARCODE_LONG", "OBF:PS_ENCODED", "OBF:BATCH_CARET_HIGH", "OBF:HTML_SCRIPT_TAG"],
+    }
+}
+
+fn contains_pattern(content: &str, pattern: &[u8]) -> bool {
+    content.as_bytes().windows(pattern.len()).any(|w| w == pattern)
+}
+
+fn contains_pattern_ci(bytes: &[u8], pattern: &[u8]) -> bool {
+    if bytes.len() < pattern.len() {
+        return false;
+    }
+    bytes.windows(pattern.len()).any(|w| {
+        w.iter().zip(pattern).all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+    })
+}
+
+/// Check whether the content contains a String.fromCharCode call with ≥8
+/// comma-separated numeric arguments (indicating a character-code decoder).
+fn has_long_charcode_call(content: &str) -> bool {
+    let mut search = content;
+    while let Some(idx) = search.find("String.fromCharCode") {
+        let after = &search[idx + 19..];
+        // Count commas in the next 512 chars (one call's worth of arguments)
+        let window = &after[..after.len().min(512)];
+        let commas = window.bytes().take_while(|&b| b != b')').filter(|&b| b == b',').count();
+        if commas >= 7 {
+            return true;
+        }
+        search = &search[idx + 1..];
+    }
+    false
+}
+
 pub fn get_linguist_tokens<'a>(content: &'a str) -> Vec<Cow<'a, str>> {
     let content_base = content.as_ptr() as usize;
     let token_pos = |s: &str| -> usize { s.as_ptr() as usize - content_base };
@@ -69,11 +189,15 @@ pub fn get_linguist_tokens<'a>(content: &'a str) -> Vec<Cow<'a, str>> {
     // (e.g. PHP webshells whose body is mostly embedded HTML/JS). Saturating
     // the cap makes the marker a high-weight feature that cosine similarity
     // against the language centroid can latch onto.
-    let mut out: Vec<Cow<'a, str>> = Vec::with_capacity(raw.len() + OPENER_EMIT_COUNT);
+    let obf_tokens = detect_obfuscation(content);
+    let mut out: Vec<Cow<'a, str>> = Vec::with_capacity(raw.len() + OPENER_EMIT_COUNT + obf_tokens.len());
     if let Some(tok) = opener {
         for _ in 0..OPENER_EMIT_COUNT {
             out.push(Cow::Borrowed(tok));
         }
+    }
+    for tok in obf_tokens {
+        out.push(Cow::Borrowed(tok));
     }
     let mut i = 0;
     while i < raw.len() {
@@ -599,5 +723,64 @@ mod tests {
         for t in &toks {
             assert!(matches!(t, Cow::Borrowed(_)), "unexpected owned: {:?}", t);
         }
+    }
+
+    // --- obfuscation pseudo-token tests ---
+
+    #[test]
+    fn jsfuck_dense_content_emits_token() {
+        // 100 chars of only JSFuck characters (>60%)
+        let jsfuck = "[]()!+".repeat(20);
+        let toks = detect_obfuscation(&jsfuck);
+        assert!(toks.contains(&"OBF:JSFUCK"), "expected OBF:JSFUCK, got {:?}", toks);
+    }
+
+    #[test]
+    fn normal_source_no_jsfuck() {
+        let src = "fn main() { let x = 42; println!(\"{}\", x); }";
+        let toks = detect_obfuscation(src);
+        assert!(!toks.contains(&"OBF:JSFUCK"));
+    }
+
+    #[test]
+    fn fromcharcode_long_emits_token() {
+        let src = "document.write(String.fromCharCode(60,115,99,114,105,112,116,62,97,108))";
+        let toks = detect_obfuscation(src);
+        assert!(toks.contains(&"OBF:FROMCHARCODE_LONG"), "got {:?}", toks);
+    }
+
+    #[test]
+    fn fromcharcode_short_no_token() {
+        let src = "String.fromCharCode(65,66,67)";
+        let toks = detect_obfuscation(src);
+        assert!(!toks.contains(&"OBF:FROMCHARCODE_LONG"));
+    }
+
+    #[test]
+    fn ps_encoded_command_emits_token() {
+        let src = "powershell.exe -EncodedCommand aABlAGwAbABvAA==";
+        let toks = detect_obfuscation(src);
+        assert!(toks.contains(&"OBF:PS_ENCODED"), "got {:?}", toks);
+    }
+
+    #[test]
+    fn batch_caret_high_emits_token() {
+        // 10 carets in a 100-char string = 10% density
+        let src = "e^c^h^o^ ^h^e^l^l^o".repeat(5);
+        let toks = detect_obfuscation(&src);
+        assert!(toks.contains(&"OBF:BATCH_CARET_HIGH"), "got {:?}", toks);
+    }
+
+    #[test]
+    fn html_script_tag_emits_token() {
+        let src = "<!DOCTYPE html>\n<html><body><script>alert(1)</script></body></html>";
+        let toks = detect_obfuscation(src);
+        assert!(toks.contains(&"OBF:HTML_SCRIPT_TAG"), "got {:?}", toks);
+    }
+
+    #[test]
+    fn empty_content_no_tokens() {
+        let toks = detect_obfuscation("");
+        assert!(toks.is_empty());
     }
 }
