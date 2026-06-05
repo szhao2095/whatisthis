@@ -8,10 +8,10 @@ use std::{
 use clap::{App, Arg};
 use hyperpolyglot::{
     detectors::{
-        apply_specialization, byte_stats, classify, classify_scored, classify_tficf,
-        classify_tficf_scored, detect_structure, filter_to_majority_family, get_extension,
-        get_language_from_filename, get_languages_from_extension, get_languages_from_heuristics,
-        get_languages_from_shebang,
+        apply_specialization, byte_stats, classify, classify_linear_scored,
+        classify_scored, classify_tficf, classify_tficf_scored, detect_structure,
+        filter_to_majority_family, get_extension, get_language_from_filename,
+        get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
     },
     region_engine::{region_profile, FileVerdict},
     Detection,
@@ -38,6 +38,7 @@ struct Strategies {
     heuristics: bool,
     classifier: bool,
     use_tficf: bool,
+    use_linear: bool,
     chunked: bool,
     entropy: bool,
     structure: bool,
@@ -78,6 +79,7 @@ fn main() {
         .arg(Arg::with_name("heuristics").short("r").long("heuristics").help("Use regex heuristic rules"))
         .arg(Arg::with_name("classifier").short("c").long("classifier").help("Use Bayesian token classifier"))
         .arg(Arg::with_name("tficf").long("tficf").help("When the classifier strategy fires, use the TF-ICF cosine-similarity classifier instead of the default naive Bayes one"))
+        .arg(Arg::with_name("linear").long("linear").help("When the classifier strategy fires, use the char 4-gram linear (TF-ICF cosine) classifier. More robust to obfuscation and encoding noise than the token-based classifiers."))
         .arg(Arg::with_name("chunked").long("chunked").help("Profile mode: for files > 150 KB, classify top / middle / bottom 50 KB chunks separately and print one verdict per chunk. Useful for files with mixed content or padding-decoy obfuscation. Smaller files keep the default single-verdict output."))
         .arg(Arg::with_name("chunk-size").long("chunk-size").value_name("SIZE").takes_value(true).help("With --chunked: tile chunks of SIZE bytes across the *entire* file instead of sampling top/middle/bottom. Catches content at any offset. Suffixes accepted: K, M, G (case-insensitive). Implies --chunked. Example: --chunk-size 16K"))
         .arg(Arg::with_name("entropy").long("entropy").help("Print byte-level statistics (Shannon entropy, printable ratio, null ratio, hex/base64 density) for each file alongside the language verdict"))
@@ -95,6 +97,7 @@ fn main() {
         .iter()
         .any(|k| matches.is_present(k));
     let use_tficf = matches.is_present("tficf");
+    let use_linear = matches.is_present("linear");
     let entropy = matches.is_present("entropy");
     let structure = matches.is_present("structure");
     let family_first = matches.is_present("family-first");
@@ -133,6 +136,7 @@ fn main() {
             heuristics: matches.is_present("heuristics"),
             classifier: matches.is_present("classifier"),
             use_tficf,
+            use_linear,
             chunked,
             entropy,
             structure,
@@ -153,6 +157,7 @@ fn main() {
             heuristics: true,
             classifier: true,
             use_tficf,
+            use_linear,
             chunked,
             entropy,
             structure,
@@ -191,8 +196,11 @@ fn main() {
 fn print_multilabel_result(path: &Path, opts: &Strategies) {
     // Build the scorer closure that mirrors the single-file classifier choice.
     let use_tficf = opts.use_tficf;
+    let use_linear = opts.use_linear;
     let scorer = move |text: &str, candidates: &[&'static str]| -> Vec<(&'static str, f64)> {
-        if use_tficf {
+        if use_linear {
+            classify_linear_scored(text, candidates)
+        } else if use_tficf {
             classify_tficf_scored(text, candidates)
         } else {
             classify_scored(text, candidates)
@@ -518,7 +526,9 @@ fn detect_with(path: &Path, opts: &Strategies) -> io::Result<DetectResult> {
     }
 
     if opts.classifier && candidates.len() != 1 {
-        let scores = if opts.use_tficf {
+        let scores = if opts.use_linear {
+            classify_linear_scored(content, &candidates)
+        } else if opts.use_tficf {
             classify_tficf_scored(content, &candidates)
         } else {
             classify_scored(content, &candidates)
