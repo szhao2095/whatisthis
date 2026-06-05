@@ -190,6 +190,8 @@ const MAGIC_OUTPUT_FILE: &str = "src/codegen/magic-config.rs";
 const TAXONOMY_SOURCE_FILE: &str = "taxonomy.yml";
 const TAXONOMY_OUTPUT_FILE: &str = "src/codegen/taxonomy-config.rs";
 const CHARGRAM_MODEL_FILE: &str = "src/codegen/linear-chargram-model.rs";
+const FUSION_SOURCE_FILE: &str = "fusion.yml";
+const FUSION_OUTPUT_FILE: &str = "src/codegen/fusion-config.rs";
 
 const MAX_TOKEN_BYTES: usize = 32;
 
@@ -210,6 +212,7 @@ fn main() {
     write_specializations_config(&languages);
     write_magic_config();
     write_taxonomy_config(&languages);
+    write_fusion_config();
 
     train_classifier();
     train_tficf_classifier();
@@ -336,6 +339,52 @@ fn write_magic_config() {
         ).unwrap();
     }
     writeln!(&mut file, "];").unwrap();
+}
+
+#[derive(Deserialize)]
+struct FusionWeights {
+    structure: f64,
+    bayes: f64,
+    tficf: f64,
+    linear: f64,
+    entropy_gate: f64,
+}
+
+#[derive(Deserialize)]
+struct FusionThresholds {
+    high_confidence: f64,
+    medium_confidence: f64,
+    abstain_below: f64,
+    ambiguity_margin: f64,
+    entropy_suppress: f64,
+    entropy_printable_min: f64,
+}
+
+#[derive(Deserialize)]
+struct FusionConfig {
+    weights: FusionWeights,
+    thresholds: FusionThresholds,
+}
+
+fn write_fusion_config() {
+    let cfg: FusionConfig = serde_yaml::from_str(
+        &fs::read_to_string(FUSION_SOURCE_FILE).unwrap_or_default()[..],
+    ).expect("fusion.yml parse error");
+
+    let mut file = BufWriter::new(File::create(FUSION_OUTPUT_FILE).unwrap());
+    writeln!(&mut file, "pub(crate) mod fusion_config {{").unwrap();
+    writeln!(&mut file, "    pub const W_STRUCTURE: f64 = {:?};", cfg.weights.structure).unwrap();
+    writeln!(&mut file, "    pub const W_BAYES: f64 = {:?};", cfg.weights.bayes).unwrap();
+    writeln!(&mut file, "    pub const W_TFICF: f64 = {:?};", cfg.weights.tficf).unwrap();
+    writeln!(&mut file, "    pub const W_LINEAR: f64 = {:?};", cfg.weights.linear).unwrap();
+    writeln!(&mut file, "    pub const W_ENTROPY_GATE: f64 = {:?};", cfg.weights.entropy_gate).unwrap();
+    writeln!(&mut file, "    pub const THRESHOLD_HIGH: f64 = {:?};", cfg.thresholds.high_confidence).unwrap();
+    writeln!(&mut file, "    pub const THRESHOLD_MED: f64 = {:?};", cfg.thresholds.medium_confidence).unwrap();
+    writeln!(&mut file, "    pub const ABSTAIN_BELOW: f64 = {:?};", cfg.thresholds.abstain_below).unwrap();
+    writeln!(&mut file, "    pub const AMBIGUITY_MARGIN: f64 = {:?};", cfg.thresholds.ambiguity_margin).unwrap();
+    writeln!(&mut file, "    pub const ENTROPY_SUPPRESS: f64 = {:?};", cfg.thresholds.entropy_suppress).unwrap();
+    writeln!(&mut file, "    pub const ENTROPY_PRINTABLE_MIN: f64 = {:?};", cfg.thresholds.entropy_printable_min).unwrap();
+    writeln!(&mut file, "}}").unwrap();
 }
 
 fn write_taxonomy_config(languages: &LanguageMap) {

@@ -10,6 +10,7 @@ use hyperpolyglot::{
     detectors::{
         apply_specialization, byte_stats, classify, classify_linear_scored,
         classify_scored, classify_tficf, classify_tficf_scored, detect_structure,
+        ensemble::{fuse, ConfidenceMode, EvidenceBundle, FusedVerdict},
         filter_to_majority_family, get_extension, get_language_from_filename,
         get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
     },
@@ -51,6 +52,9 @@ struct Strategies {
     window_size: usize,
     stride: usize,
     top_k_labels: usize,
+    hostile: bool,
+    explain_scores: bool,
+    confidence_mode: ConfidenceMode,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -91,6 +95,9 @@ fn main() {
         .arg(Arg::with_name("window-size").long("window-size").value_name("SIZE").takes_value(true).help("Window size for --multilabel mode. Suffixes K/M/G accepted. Default: 16K."))
         .arg(Arg::with_name("stride").long("stride").value_name("SIZE").takes_value(true).help("Stride between windows for --multilabel mode. Default: 4K."))
         .arg(Arg::with_name("top-k-labels").long("top-k-labels").value_name("N").takes_value(true).help("Maximum number of labels to show in --multilabel output. Default: 3."))
+        .arg(Arg::with_name("hostile").long("hostile").help("Hostile-mode preset: enables all detectors (structure, entropy, all classifiers) and uses the calibrated ensemble with abstention. Implies --structure, --entropy, --classifier, --tficf, --linear."))
+        .arg(Arg::with_name("explain-scores").long("explain-scores").help("In --hostile mode, print a per-signal score table before the final verdict."))
+        .arg(Arg::with_name("confidence-mode").long("confidence-mode").value_name("MODE").takes_value(true).possible_values(&["high", "medium", "best-guess"]).default_value("medium").help("Confidence threshold for ensemble abstention: high (>=0.70), medium (>=0.40), best-guess (never abstain)."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -110,6 +117,13 @@ fn main() {
     let ambiguity_margin = matches.value_of("ambiguity-margin")
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0);
+    let hostile = matches.is_present("hostile");
+    let explain_scores = matches.is_present("explain-scores");
+    let confidence_mode = match matches.value_of("confidence-mode").unwrap_or("medium") {
+        "high" => ConfidenceMode::High,
+        "best-guess" => ConfidenceMode::BestGuess,
+        _ => ConfidenceMode::Medium,
+    };
     let multilabel = matches.is_present("multilabel");
     let window_size = matches.value_of("window-size")
         .map(|s| parse_size(s).unwrap_or_else(|e| { eprintln!("whatis: invalid --window-size: {}", e); process::exit(2); }))
@@ -128,18 +142,25 @@ fn main() {
     });
     // --chunk-size implies --chunked
     let chunked = matches.is_present("chunked") || tile_chunk_size.is_some();
-    let opts = if any {
+    // --hostile overrides individual stage flags to enable everything.
+    let (classifier_on, structure_on, entropy_on, tficf_on, linear_on) = if hostile {
+        (true, true, true, true, true)
+    } else {
+        (matches.is_present("classifier"), structure, entropy, use_tficf, use_linear)
+    };
+
+    let opts = if any || hostile {
         Strategies {
-            filename: matches.is_present("filename"),
-            extension: matches.is_present("extension"),
-            shebang: matches.is_present("shebang"),
-            heuristics: matches.is_present("heuristics"),
-            classifier: matches.is_present("classifier"),
-            use_tficf,
-            use_linear,
+            filename: if hostile { true } else { matches.is_present("filename") },
+            extension: if hostile { true } else { matches.is_present("extension") },
+            shebang: if hostile { true } else { matches.is_present("shebang") },
+            heuristics: if hostile { true } else { matches.is_present("heuristics") },
+            classifier: classifier_on,
+            use_tficf: tficf_on,
+            use_linear: linear_on,
             chunked,
-            entropy,
-            structure,
+            entropy: entropy_on,
+            structure: structure_on,
             family_first,
             unknown_threshold,
             ambiguity_margin,
@@ -147,6 +168,9 @@ fn main() {
             window_size,
             stride,
             top_k_labels,
+            hostile,
+            explain_scores,
+            confidence_mode,
             tile_chunk_size,
         }
     } else {
@@ -168,6 +192,9 @@ fn main() {
             window_size,
             stride,
             top_k_labels,
+            hostile,
+            explain_scores,
+            confidence_mode,
             tile_chunk_size,
         }
     };
@@ -190,6 +217,73 @@ fn main() {
             }
             print_result(p, &opts);
         }
+    }
+}
+
+fn print_hostile_result(path: &Path, opts: &Strategies) {
+    let result: io::Result<()> = (|| {
+        // 1. Read raw bytes for structure + entropy.
+        let mut file = File::open(path)?;
+        let mut raw = Vec::new();
+        file.read_to_end(&mut raw)?;
+
+        let struct_hits = detect_structure(&raw[..raw.len().min(32)]);
+        let bstats = byte_stats(&raw[..raw.len().min(51200)]);
+
+        // 2. Decode text for classifiers.
+        let content = String::from_utf8_lossy(&raw[..raw.len().min(51200)]).into_owned();
+
+        // Get extension-derived candidates.
+        let filename_str = path.file_name().and_then(|f| f.to_str());
+        let extension = filename_str.and_then(get_extension);
+        let candidates: Vec<&'static str> = extension
+            .as_ref()
+            .map(|e| get_languages_from_extension(e))
+            .unwrap_or_default();
+
+        let bayes  = classify_scored(&content, &candidates);
+        let tficf  = classify_tficf_scored(&content, &candidates);
+        let linear = classify_linear_scored(&content, &candidates);
+
+        if opts.explain_scores {
+            println!("{}:", path.display());
+            if !struct_hits.is_empty() {
+                println!("  [Structure] {}", struct_hits.iter().map(|h| h.name).collect::<Vec<_>>().join(", "));
+            }
+            println!("  [Entropy]   H={:.2} printable={:.2}", bstats.entropy, bstats.printable_ratio);
+            if let Some((l, s)) = bayes.first()  { println!("  [Bayes]     {} ({:.3})", l, s); }
+            if let Some((l, s)) = tficf.first()  { println!("  [TF-ICF]    {} ({:.3})", l, s); }
+            if let Some((l, s)) = linear.first() { println!("  [Linear]    {} ({:.3})", l, s); }
+        }
+
+        let evidence = EvidenceBundle {
+            structure_hits: struct_hits,
+            byte_stats: Some(bstats),
+            bayes_scores: bayes,
+            tficf_scores: tficf,
+            linear_scores: linear,
+            candidates: &candidates,
+        };
+
+        let verdict = fuse(&evidence, opts.confidence_mode);
+        let label = match verdict {
+            FusedVerdict::Confident(lang, score) => format!("{} [Hostile {:.2}]", lang, score),
+            FusedVerdict::Ambiguous(top) => {
+                let names: Vec<_> = top.iter().map(|(l, _)| *l).collect();
+                format!("<ambiguous: {}>", names.join(", "))
+            }
+            FusedVerdict::Unknown => "<unknown>".to_string(),
+        };
+
+        if opts.explain_scores {
+            println!("  => {}", label);
+        } else {
+            println!("{}: {}", path.display(), label);
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        println!("{}: <error: {}>", path.display(), e);
     }
 }
 
@@ -242,6 +336,12 @@ fn print_multilabel_result(path: &Path, opts: &Strategies) {
 }
 
 fn print_result(path: &Path, opts: &Strategies) {
+    // Hostile-mode ensemble path.
+    if opts.hostile {
+        print_hostile_result(path, opts);
+        return;
+    }
+
     // Multilabel region-engine path — runs before the single-verdict path.
     if opts.multilabel {
         print_multilabel_result(path, opts);

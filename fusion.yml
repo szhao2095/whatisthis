@@ -1,0 +1,20 @@
+# Ensemble fusion weights and confidence thresholds for --hostile mode.
+# These control how signals from each detector are combined and when
+# whatis abstains from giving a verdict.
+
+weights:
+  structure: 0.40
+  bayes: 0.15
+  tficf: 0.25
+  linear: 0.10
+  entropy_gate: 0.10
+
+thresholds:
+  high_confidence: 0.70
+  medium_confidence: 0.40
+  abstain_below: 0.20
+  ambiguity_margin: 0.05
+  # Files with entropy > this AND printable_ratio < entropy_printable_min
+  # have their text-classifier scores suppressed in favor of structure hits.
+  entropy_suppress: 7.5
+  entropy_printable_min: 0.20
