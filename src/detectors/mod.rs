@@ -1,5 +1,6 @@
 mod classifier;
 pub mod ensemble;
+pub mod mixture;
 pub mod entropy;
 mod extensions;
 mod filenames;
