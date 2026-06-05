@@ -1,0 +1,139 @@
+# Language family taxonomy for --family-first classification.
+# Maps each language name to a broad family so the classifier only compares
+# candidates within the same family, reducing cross-family confusion.
+# Languages not listed here are implicitly in the "General" family.
+#
+# Families:
+#   WebScript   - HTML, JavaScript, CSS, PHP, templating, HTA variants
+#   Shell       - Unix shell, batch, PowerShell, scripting runtimes
+#   OfficeMacro - VBA and macro-enabled Office formats
+#   DataMarkup  - JSON, XML, YAML, TOML, configuration, serialization
+#   Prose       - Markdown, reStructuredText, plain text
+#   Systems     - C, C++, Rust, Go, Assembly (low-level compiled)
+#   JVM         - Java, Kotlin, Scala, Clojure, Groovy
+#   Scripting   - Python, Ruby, Perl, Lua, R, PHP (interpreted scripting)
+#   Functional  - Haskell, OCaml, F*, Erlang, Elixir
+#   General     - everything else
+
+HTML: WebScript
+HTML+Django: WebScript
+HTML+ERB: WebScript
+HTML+PHP: WebScript
+HTML+Razor: WebScript
+HTA: WebScript
+JavaScript: WebScript
+JavaScript+JSFuck: WebScript
+JavaScript+HexString: WebScript
+JavaScript+CharCodeObfuscated: WebScript
+JavaScript+URIEncoded: WebScript
+TypeScript: WebScript
+TSX: WebScript
+JSX: WebScript
+CoffeeScript: WebScript
+CSS: WebScript
+SCSS: WebScript
+Less: WebScript
+Sass: WebScript
+PHP: WebScript
+Hack: WebScript
+Pug: WebScript
+Haml: WebScript
+Slim: WebScript
+Handlebars: WebScript
+Mustache: WebScript
+EJS: WebScript
+Liquid: WebScript
+Nunjucks: WebScript
+Vue: WebScript
+Svelte: WebScript
+WebAssembly: WebScript
+
+Shell: Shell
+Batchfile: Shell
+Batchfile+CaretObfuscated: Shell
+PowerShell: Shell
+Tcl: Shell
+Fish: Shell
+Zsh: Shell
+Bash: Shell
+
+VBA: OfficeMacro
+VBA+JSONPacked: OfficeMacro
+VBScript: OfficeMacro
+VBScript+HTMLDecoy: OfficeMacro
+VBScript+LongIdentObfuscated: OfficeMacro
+VBScript+CharCodeSubtract: OfficeMacro
+VBScript+ChrWMid: OfficeMacro
+
+JSON: DataMarkup
+JSON5: DataMarkup
+JSONLD: DataMarkup
+XML: DataMarkup
+YAML: DataMarkup
+TOML: DataMarkup
+INI: DataMarkup
+CSV: DataMarkup
+TSV: DataMarkup
+Protocol Buffer: DataMarkup
+Thrift: DataMarkup
+RAML: DataMarkup
+OpenAPI Specification v2: DataMarkup
+
+Markdown: Prose
+AsciiDoc: Prose
+reStructuredText: Prose
+Textile: Prose
+Pod: Prose
+Pod 6: Prose
+Wiki: Prose
+Org: Prose
+RDoc: Prose
+
+C: Systems
+C++: Systems
+Objective-C: Systems
+Objective-C++: Systems
+Rust: Systems
+Go: Systems
+Assembly: Systems
+Unix Assembly: Systems
+NASM: Systems
+LLVM: Systems
+D: Systems
+Zig: Systems
+Nim: Systems
+Ada: Systems
+Fortran: Systems
+
+Java: JVM
+Kotlin: JVM
+Scala: JVM
+Clojure: JVM
+Groovy: JVM
+Ceylon: JVM
+Xtend: JVM
+
+Python: Scripting
+Ruby: Scripting
+Perl: Scripting
+Perl 6: Scripting
+Lua: Scripting
+R: Scripting
+PHP: Scripting
+Crystal: Scripting
+Elixir: Scripting
+Erlang: Scripting
+Groovy: Scripting
+
+Haskell: Functional
+OCaml: Functional
+F*: Functional
+F#: Functional
+Standard ML: Functional
+Elm: Functional
+PureScript: Functional
+Reason: Functional
+Racket: Functional
+Scheme: Functional
+Common Lisp: Functional
+Clojure: Functional

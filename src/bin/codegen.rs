@@ -187,6 +187,8 @@ const SPECIALIZATIONS_SOURCE_FILE: &str = "specializations.yml";
 const SPECIALIZATIONS_OUTPUT_FILE: &str = "src/codegen/specializations-config.rs";
 const MAGIC_SOURCE_FILE: &str = "magic.yml";
 const MAGIC_OUTPUT_FILE: &str = "src/codegen/magic-config.rs";
+const TAXONOMY_SOURCE_FILE: &str = "taxonomy.yml";
+const TAXONOMY_OUTPUT_FILE: &str = "src/codegen/taxonomy-config.rs";
 
 const MAX_TOKEN_BYTES: usize = 32;
 
@@ -206,6 +208,7 @@ fn main() {
 
     write_specializations_config(&languages);
     write_magic_config();
+    write_taxonomy_config(&languages);
 
     train_classifier();
     train_tficf_classifier();
@@ -331,6 +334,34 @@ fn write_magic_config() {
         ).unwrap();
     }
     writeln!(&mut file, "];").unwrap();
+}
+
+fn write_taxonomy_config(languages: &LanguageMap) {
+    // taxonomy.yml: "LanguageName: FamilyName"
+    let raw = fs::read_to_string(TAXONOMY_SOURCE_FILE).unwrap_or_default();
+    let mapping: HashMap<String, String> = serde_yaml::from_str(&raw)
+        .expect("taxonomy.yml parse error");
+
+    // Warn (but don't panic) for names not in languages.yml — taxonomy may
+    // intentionally include variants that aren't in the base corpus.
+    for lang in mapping.keys() {
+        if !languages.contains_key(lang.as_str()) {
+            eprintln!("taxonomy.yml: {:?} not in languages.yml (skipping)", lang);
+        }
+    }
+
+    let mut map = PhfMap::new();
+    for (lang, family) in &mapping {
+        map.entry(lang.as_str(), &format!("{:?}", family));
+    }
+
+    let mut file = BufWriter::new(File::create(TAXONOMY_OUTPUT_FILE).unwrap());
+    writeln!(
+        &mut file,
+        "static TAXONOMY: phf::Map<&'static str, &'static str> =\n{};\n",
+        map.build()
+    )
+    .unwrap();
 }
 
 fn write_language_list(languages: &LanguageMap) {

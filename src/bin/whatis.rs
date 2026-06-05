@@ -8,9 +8,9 @@ use std::{
 use clap::{App, Arg};
 use hyperpolyglot::{
     detectors::{
-        apply_specialization, byte_stats, classify, classify_tficf, detect_structure, get_extension,
-        get_language_from_filename, get_languages_from_extension, get_languages_from_heuristics,
-        get_languages_from_shebang,
+        apply_specialization, byte_stats, classify, classify_tficf, detect_structure,
+        filter_to_majority_family, get_extension, get_language_from_filename,
+        get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
     },
     Detection,
 };
@@ -39,6 +39,7 @@ struct Strategies {
     chunked: bool,
     entropy: bool,
     structure: bool,
+    family_first: bool,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -71,6 +72,7 @@ fn main() {
         .arg(Arg::with_name("chunk-size").long("chunk-size").value_name("SIZE").takes_value(true).help("With --chunked: tile chunks of SIZE bytes across the *entire* file instead of sampling top/middle/bottom. Catches content at any offset. Suffixes accepted: K, M, G (case-insensitive). Implies --chunked. Example: --chunk-size 16K"))
         .arg(Arg::with_name("entropy").long("entropy").help("Print byte-level statistics (Shannon entropy, printable ratio, null ratio, hex/base64 density) for each file alongside the language verdict"))
         .arg(Arg::with_name("structure").long("structure").help("Check for binary/container magic bytes before text classification. For hard binary formats (ELF, PE, GZIP, PNG) the text classifier is suppressed and the format is reported directly. For advisory formats (PDF, ZIP, OLE2) the structure hit is shown alongside the text verdict."))
+        .arg(Arg::with_name("family-first").long("family-first").help("Before running the classifier, filter the candidate language set to those in the plurality family (WebScript, Shell, Systems, etc.) according to taxonomy.yml. Reduces cross-family confusion when the extension is ambiguous."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -79,6 +81,7 @@ fn main() {
     let use_tficf = matches.is_present("tficf");
     let entropy = matches.is_present("entropy");
     let structure = matches.is_present("structure");
+    let family_first = matches.is_present("family-first");
     let tile_chunk_size = matches.value_of("chunk-size").map(|s| {
         parse_size(s).unwrap_or_else(|e| {
             eprintln!("whatis: invalid --chunk-size {:?}: {}", s, e);
@@ -98,6 +101,7 @@ fn main() {
             chunked,
             entropy,
             structure,
+            family_first,
             tile_chunk_size,
         }
     } else {
@@ -111,6 +115,7 @@ fn main() {
             chunked,
             entropy,
             structure,
+            family_first,
             tile_chunk_size,
         }
     };
@@ -397,6 +402,10 @@ fn detect_with(path: &Path, opts: &Strategies) -> io::Result<DetectResult> {
     let mut content = String::new();
     reader.read_to_string(&mut content)?;
     let content = truncate_to_char_boundary(&content, MAX_CONTENT_SIZE_BYTES);
+
+    if opts.family_first && candidates.len() > 1 {
+        candidates = filter_to_majority_family(&candidates);
+    }
 
     if opts.heuristics && candidates.len() > 1 {
         if let Some(ext) = extension.as_ref() {
