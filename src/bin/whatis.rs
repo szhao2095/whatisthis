@@ -13,6 +13,7 @@ use hyperpolyglot::{
         get_language_from_filename, get_languages_from_extension, get_languages_from_heuristics,
         get_languages_from_shebang,
     },
+    region_engine::{region_profile, FileVerdict},
     Detection,
 };
 use ignore::WalkBuilder;
@@ -45,6 +46,10 @@ struct Strategies {
     unknown_threshold: Option<f64>,
     /// When > 0.0, return Ambiguous if top two scores differ by less than this.
     ambiguity_margin: f64,
+    multilabel: bool,
+    window_size: usize,
+    stride: usize,
+    top_k_labels: usize,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -80,6 +85,10 @@ fn main() {
         .arg(Arg::with_name("family-first").long("family-first").help("Before running the classifier, filter the candidate language set to those in the plurality family (WebScript, Shell, Systems, etc.) according to taxonomy.yml. Reduces cross-family confusion when the extension is ambiguous."))
         .arg(Arg::with_name("unknown-threshold").long("unknown-threshold").value_name("SCORE").takes_value(true).help("When using --tficf, emit <unknown> instead of a forced label if the best cosine similarity score is below SCORE (0.0-1.0). Default: disabled."))
         .arg(Arg::with_name("ambiguity-margin").long("ambiguity-margin").value_name("DELTA").takes_value(true).help("When using --tficf or the Bayes classifier, emit <ambiguous> if the top two scores differ by less than DELTA. Default: 0.0 (disabled)."))
+        .arg(Arg::with_name("multilabel").long("multilabel").help("Run the classifier over overlapping sliding windows and aggregate per-label peak/coverage/persistence scores. Prints multiple labels when more than one language scores above the threshold. Useful for mixed-content or polyglot files."))
+        .arg(Arg::with_name("window-size").long("window-size").value_name("SIZE").takes_value(true).help("Window size for --multilabel mode. Suffixes K/M/G accepted. Default: 16K."))
+        .arg(Arg::with_name("stride").long("stride").value_name("SIZE").takes_value(true).help("Stride between windows for --multilabel mode. Default: 4K."))
+        .arg(Arg::with_name("top-k-labels").long("top-k-labels").value_name("N").takes_value(true).help("Maximum number of labels to show in --multilabel output. Default: 3."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -98,6 +107,16 @@ fn main() {
     let ambiguity_margin = matches.value_of("ambiguity-margin")
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0);
+    let multilabel = matches.is_present("multilabel");
+    let window_size = matches.value_of("window-size")
+        .map(|s| parse_size(s).unwrap_or_else(|e| { eprintln!("whatis: invalid --window-size: {}", e); process::exit(2); }))
+        .unwrap_or(16 * 1024);
+    let stride = matches.value_of("stride")
+        .map(|s| parse_size(s).unwrap_or_else(|e| { eprintln!("whatis: invalid --stride: {}", e); process::exit(2); }))
+        .unwrap_or(4 * 1024);
+    let top_k_labels = matches.value_of("top-k-labels")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(3);
     let tile_chunk_size = matches.value_of("chunk-size").map(|s| {
         parse_size(s).unwrap_or_else(|e| {
             eprintln!("whatis: invalid --chunk-size {:?}: {}", s, e);
@@ -120,6 +139,10 @@ fn main() {
             family_first,
             unknown_threshold,
             ambiguity_margin,
+            multilabel,
+            window_size,
+            stride,
+            top_k_labels,
             tile_chunk_size,
         }
     } else {
@@ -136,6 +159,10 @@ fn main() {
             family_first,
             unknown_threshold,
             ambiguity_margin,
+            multilabel,
+            window_size,
+            stride,
+            top_k_labels,
             tile_chunk_size,
         }
     };
@@ -161,7 +188,59 @@ fn main() {
     }
 }
 
+fn print_multilabel_result(path: &Path, opts: &Strategies) {
+    // Build the scorer closure that mirrors the single-file classifier choice.
+    let use_tficf = opts.use_tficf;
+    let scorer = move |text: &str, candidates: &[&'static str]| -> Vec<(&'static str, f64)> {
+        if use_tficf {
+            classify_tficf_scored(text, candidates)
+        } else {
+            classify_scored(text, candidates)
+        }
+    };
+
+    // Derive candidates from extension (same as single-file path).
+    let filename_str = path.file_name().and_then(|f| f.to_str());
+    let extension = filename_str.and_then(get_extension);
+    let candidates: Vec<&'static str> = extension
+        .as_ref()
+        .map(|e| get_languages_from_extension(e))
+        .unwrap_or_default();
+
+    let result: io::Result<FileVerdict> = (|| {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        Ok(region_profile(&buf, opts.window_size, opts.stride, &scorer, &candidates))
+    })();
+
+    match result {
+        Err(e) => println!("{}: <error: {}>", path.display(), e),
+        Ok(verdict) => {
+            let k = opts.top_k_labels.max(1);
+            let top: Vec<_> = verdict.labels.iter().take(k).collect();
+            if top.is_empty() {
+                println!("{}: <unknown>", path.display());
+            } else if top.len() == 1 {
+                println!("{}: {} [Classifier]", path.display(), top[0].0);
+            } else {
+                println!("{}:", path.display());
+                for (lang, score) in &top {
+                    println!("  {:.3}  {}", score, lang);
+                }
+            }
+        }
+    }
+}
+
 fn print_result(path: &Path, opts: &Strategies) {
+    // Multilabel region-engine path — runs before the single-verdict path.
+    if opts.multilabel {
+        print_multilabel_result(path, opts);
+        if opts.entropy { print_entropy(path); }
+        return;
+    }
+
     // Structure stage: read raw magic bytes before any text processing.
     let structure_advisory: Vec<&'static str> = if opts.structure {
         match read_structure_hits(path) {

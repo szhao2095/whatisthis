@@ -14,6 +14,7 @@ use std::{
 
 pub mod detectors;
 pub mod filters;
+pub mod region_engine;
 
 // Include the map that stores language info
 // static LANGUAGE_INFO: phf::Map<&'static str, Language> = ...;
