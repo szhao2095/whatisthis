@@ -5,6 +5,7 @@ mod filenames;
 mod heuristics;
 mod interpreters;
 mod specializations;
+pub mod structure;
 mod tficf_classifier;
 
 pub use classifier::{classify, classify_scored};
@@ -14,4 +15,5 @@ pub use filenames::get_language_from_filename;
 pub use heuristics::get_languages_from_heuristics;
 pub use interpreters::get_languages_from_shebang;
 pub use specializations::apply_specialization;
+pub use structure::{detect_structure, StructureHit};
 pub use tficf_classifier::{classify_tficf, classify_tficf_scored};

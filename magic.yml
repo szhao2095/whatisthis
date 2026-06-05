@@ -1,0 +1,54 @@
+# Magic-byte signatures for binary/container format detection.
+# Each entry is checked against the first 32 raw bytes of the file.
+# suppress_text_classifier: true  -> skip text classifiers entirely (binary-only format)
+# suppress_text_classifier: false -> advisory annotation alongside text verdict
+
+- name: ELF
+  magic: "7f454c46"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: PE
+  magic: "4d5a"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: PDF
+  magic: "25504446"
+  offset: 0
+  suppress_text_classifier: false
+
+- name: ZIP
+  magic: "504b0304"
+  offset: 0
+  suppress_text_classifier: false
+
+- name: GZIP
+  magic: "1f8b"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: OLE2
+  magic: "d0cf11e0a1b11ae1"
+  offset: 0
+  suppress_text_classifier: false
+
+- name: PNG
+  magic: "89504e470d0a1a0a"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: SQLite
+  magic: "53514c69746520666f726d6174203300"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: JPEG
+  magic: "ffd8ff"
+  offset: 0
+  suppress_text_classifier: true
+
+- name: WebAssembly
+  magic: "0061736d"
+  offset: 0
+  suppress_text_classifier: true

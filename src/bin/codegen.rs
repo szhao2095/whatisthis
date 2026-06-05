@@ -185,6 +185,8 @@ const HEURISTICS_SOURCE_FILE: &str = "heuristics.yml";
 const LANGUAGE_SOURCE_FILE: &str = "languages.yml";
 const SPECIALIZATIONS_SOURCE_FILE: &str = "specializations.yml";
 const SPECIALIZATIONS_OUTPUT_FILE: &str = "src/codegen/specializations-config.rs";
+const MAGIC_SOURCE_FILE: &str = "magic.yml";
+const MAGIC_OUTPUT_FILE: &str = "src/codegen/magic-config.rs";
 
 const MAX_TOKEN_BYTES: usize = 32;
 
@@ -203,6 +205,7 @@ fn main() {
     create_disambiguation_heuristics_map(heuristics);
 
     write_specializations_config(&languages);
+    write_magic_config();
 
     train_classifier();
     train_tficf_classifier();
@@ -275,6 +278,57 @@ fn write_specializations_config(languages: &LanguageMap) {
             r.variant, base_expr, r.pattern,
         )
         .unwrap();
+    }
+    writeln!(&mut file, "];").unwrap();
+}
+
+#[derive(Deserialize)]
+struct MagicRuleDTO {
+    name: String,
+    magic: String,
+    offset: usize,
+    suppress_text_classifier: bool,
+}
+
+fn write_magic_config() {
+    let rules: Vec<MagicRuleDTO> = serde_yaml::from_str(
+        &fs::read_to_string(MAGIC_SOURCE_FILE).unwrap_or_default()[..],
+    )
+    .expect("magic.yml parse error");
+
+    let mut file = BufWriter::new(File::create(MAGIC_OUTPUT_FILE).unwrap());
+
+    writeln!(&mut file, "pub(crate) struct MagicRule {{").unwrap();
+    writeln!(&mut file, "    pub name: &'static str,").unwrap();
+    writeln!(&mut file, "    pub magic_bytes: &'static [u8],").unwrap();
+    writeln!(&mut file, "    pub offset: usize,").unwrap();
+    writeln!(&mut file, "    pub suppress_text_classifier: bool,").unwrap();
+    writeln!(&mut file, "}}").unwrap();
+    writeln!(&mut file).unwrap();
+
+    // Emit each rule's magic bytes as a standalone &[u8] static so the
+    // outer static array can borrow them.
+    for (i, rule) in rules.iter().enumerate() {
+        let hex = rule.magic.trim();
+        assert!(hex.len() % 2 == 0 && hex.chars().all(|c| c.is_ascii_hexdigit()),
+            "magic.yml: {:?} has invalid hex string {:?}", rule.name, hex);
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|j| u8::from_str_radix(&hex[j..j+2], 16).unwrap())
+            .collect();
+        let bytes_repr: Vec<String> = bytes.iter().map(|b| format!("0x{:02x}", b)).collect();
+        writeln!(&mut file, "static MAGIC_BYTES_{}: &[u8] = &[{}];",
+            i, bytes_repr.join(", ")).unwrap();
+    }
+    writeln!(&mut file).unwrap();
+
+    writeln!(&mut file, "pub(crate) static MAGIC_RULES: &[MagicRule] = &[").unwrap();
+    for (i, rule) in rules.iter().enumerate() {
+        writeln!(
+            &mut file,
+            "    MagicRule {{ name: {:?}, magic_bytes: MAGIC_BYTES_{}, offset: {}, suppress_text_classifier: {} }},",
+            rule.name, i, rule.offset, rule.suppress_text_classifier
+        ).unwrap();
     }
     writeln!(&mut file, "];").unwrap();
 }
