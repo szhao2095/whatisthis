@@ -13,6 +13,7 @@ use hyperpolyglot::{
         ensemble::{fuse, ConfidenceMode, EvidenceBundle, FusedVerdict},
         filter_to_majority_family, get_extension, get_language_from_filename,
         get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
+        hmm::viterbi_smooth,
         mixture::em_mixture,
     },
     region_engine::{region_profile, FileVerdict},
@@ -59,6 +60,8 @@ struct Strategies {
     mixture: bool,
     mixture_iters: usize,
     max_labels: usize,
+    hmm: bool,
+    transition_penalty: f64,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -105,6 +108,8 @@ fn main() {
         .arg(Arg::with_name("mixture").long("mixture").help("Run EM mixture estimation over per-window scores to estimate file-level language proportions. Implies windowed scanning. Output: 'HTML 72%, JavaScript 21%, ...'"))
         .arg(Arg::with_name("mixture-iters").long("mixture-iters").value_name("N").takes_value(true).help("Number of EM iterations for --mixture. Default: 10."))
         .arg(Arg::with_name("max-labels").long("max-labels").value_name("N").takes_value(true).help("Maximum number of labels in --mixture output. Default: 3."))
+        .arg(Arg::with_name("hmm").long("hmm").help("Apply Viterbi HMM decoding to the per-region label sequence. Neighboring windows pay a transition penalty for label changes, suppressing single-window noise. Requires windowed scanning (implies --multilabel if neither --mixture nor --multilabel is set)."))
+        .arg(Arg::with_name("transition-penalty").long("transition-penalty").value_name("F").takes_value(true).help("Log-space cost for a label change between adjacent windows. Default: 2.0. Higher values = stronger contiguity bias."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -127,6 +132,10 @@ fn main() {
     let mixture = matches.is_present("mixture");
     let mixture_iters = matches.value_of("mixture-iters").and_then(|s| s.parse().ok()).unwrap_or(10);
     let max_labels = matches.value_of("max-labels").and_then(|s| s.parse().ok()).unwrap_or(3);
+    let hmm = matches.is_present("hmm");
+    let transition_penalty = matches.value_of("transition-penalty")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(2.0);
     let hostile = matches.is_present("hostile");
     let explain_scores = matches.is_present("explain-scores");
     let confidence_mode = match matches.value_of("confidence-mode").unwrap_or("medium") {
@@ -184,6 +193,8 @@ fn main() {
             mixture,
             mixture_iters,
             max_labels,
+            hmm,
+            transition_penalty,
             tile_chunk_size,
         }
     } else {
@@ -211,6 +222,8 @@ fn main() {
             mixture,
             mixture_iters,
             max_labels,
+            hmm,
+            transition_penalty,
             tile_chunk_size,
         }
     };
@@ -295,6 +308,46 @@ fn print_hostile_result(path: &Path, opts: &Strategies) {
             println!("  => {}", label);
         } else {
             println!("{}: {}", path.display(), label);
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        println!("{}: <error: {}>", path.display(), e);
+    }
+}
+
+fn print_hmm_result(path: &Path, opts: &Strategies) {
+    let use_tficf = opts.use_tficf;
+    let use_linear = opts.use_linear;
+    let scorer = move |text: &str, candidates: &[&'static str]| -> Vec<(&'static str, f64)> {
+        if use_linear { classify_linear_scored(text, candidates) }
+        else if use_tficf { classify_tficf_scored(text, candidates) }
+        else { classify_scored(text, candidates) }
+    };
+
+    let filename_str = path.file_name().and_then(|f| f.to_str());
+    let extension = filename_str.and_then(get_extension);
+    let candidates: Vec<&'static str> = extension
+        .as_ref()
+        .map(|e| get_languages_from_extension(e))
+        .unwrap_or_default();
+
+    let result: io::Result<()> = (|| {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+
+        let verdict = region_profile(&buf, opts.window_size, opts.stride, &scorer, &candidates);
+        let region_scores: Vec<Vec<_>> = verdict.regions.iter().map(|r| r.scores.clone()).collect();
+        let smoothed = viterbi_smooth(&region_scores, opts.transition_penalty);
+
+        if smoothed.is_empty() {
+            println!("{}: <unknown>", path.display());
+            return Ok(());
+        }
+        println!("{}:", path.display());
+        for (i, (region, label)) in verdict.regions.iter().zip(smoothed.iter()).enumerate() {
+            println!("  [{:>4}] {:>8}..{:<8}  {}", i, region.start, region.end, label);
         }
         Ok(())
     })();
@@ -399,6 +452,12 @@ fn print_result(path: &Path, opts: &Strategies) {
     // Hostile-mode ensemble path.
     if opts.hostile {
         print_hostile_result(path, opts);
+        return;
+    }
+
+    // HMM smoothing path.
+    if opts.hmm {
+        print_hmm_result(path, opts);
         return;
     }
 
