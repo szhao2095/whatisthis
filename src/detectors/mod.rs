@@ -1,4 +1,5 @@
 mod classifier;
+pub mod ann;
 pub mod ensemble;
 pub mod hmm;
 pub mod lda;
@@ -24,4 +25,4 @@ pub use interpreters::get_languages_from_shebang;
 pub use linear_chargram::{classify_linear, classify_linear_scored};
 pub use specializations::apply_specialization;
 pub use structure::{detect_structure, StructureHit};
-pub use tficf_classifier::{classify_tficf, classify_tficf_scored};
+pub use tficf_classifier::{classify_tficf, classify_tficf_ann, classify_tficf_scored};

@@ -10,7 +10,7 @@ use polyglot_tokenizer::get_linguist_tokens;
 use hyperpolyglot::{
     detectors::{
         apply_specialization, byte_stats, classify, classify_linear_scored,
-        classify_scored, classify_tficf, classify_tficf_scored, detect_structure,
+        classify_scored, classify_tficf, classify_tficf_ann, classify_tficf_scored, detect_structure,
         ensemble::{fuse, ConfidenceMode, EvidenceBundle, FusedVerdict},
         filter_to_majority_family, get_extension, get_language_from_filename,
         get_languages_from_extension, get_languages_from_heuristics, get_languages_from_shebang,
@@ -67,6 +67,8 @@ struct Strategies {
     lda: bool,
     lda_topics: usize,
     lda_iters: usize,
+    ann: bool,
+    shortlist_k: usize,
     /// When set, switch chunked output from the default 3-chunk (top/mid/bot)
     /// sampling to *tiling* mode: break the file into consecutive chunks of
     /// this many bytes and print a verdict for each.
@@ -118,6 +120,8 @@ fn main() {
         .arg(Arg::with_name("lda").long("lda").help("Run unsupervised LDA topic discovery over per-window token bags. Output is topics with top tokens, not language labels. Useful for exploring mixed-content corpora. Implies windowed scanning."))
         .arg(Arg::with_name("lda-topics").long("lda-topics").value_name("N").takes_value(true).help("Number of LDA topics to discover. Default: 10."))
         .arg(Arg::with_name("lda-iters").long("lda-iters").value_name("N").takes_value(true).help("Number of variational EM iterations for LDA. Default: 50."))
+        .arg(Arg::with_name("ann").long("ann").help("Use SimHash approximate nearest-neighbor shortlisting when --tficf is active and no candidate set is provided (open-world classification). Prunes the centroid space to --shortlist-k candidates before exact cosine scoring."))
+        .arg(Arg::with_name("shortlist-k").long("shortlist-k").value_name("N").takes_value(true).help("Number of ANN-shortlisted candidates for --ann mode. Default: 16."))
         .get_matches();
 
     let any = ["filename", "extension", "shebang", "heuristics", "classifier"]
@@ -147,6 +151,8 @@ fn main() {
     let lda = matches.is_present("lda");
     let lda_topics = matches.value_of("lda-topics").and_then(|s| s.parse().ok()).unwrap_or(10);
     let lda_iters = matches.value_of("lda-iters").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let ann = matches.is_present("ann");
+    let shortlist_k = matches.value_of("shortlist-k").and_then(|s| s.parse().ok()).unwrap_or(16);
     let hostile = matches.is_present("hostile");
     let explain_scores = matches.is_present("explain-scores");
     let confidence_mode = match matches.value_of("confidence-mode").unwrap_or("medium") {
@@ -209,6 +215,8 @@ fn main() {
             lda,
             lda_topics,
             lda_iters,
+            ann,
+            shortlist_k,
             tile_chunk_size,
         }
     } else {
@@ -241,6 +249,8 @@ fn main() {
             lda,
             lda_topics,
             lda_iters,
+            ann,
+            shortlist_k,
             tile_chunk_size,
         }
     };
@@ -816,6 +826,11 @@ fn detect_with(path: &Path, opts: &Strategies) -> io::Result<DetectResult> {
     if opts.classifier && candidates.len() != 1 {
         let scores = if opts.use_linear {
             classify_linear_scored(content, &candidates)
+        } else if opts.use_tficf && opts.ann {
+            // ANN path: shortlist then exact cosine. Returns a single winner,
+            // so wrap it for the threshold checks below.
+            let winner = classify_tficf_ann(content, &candidates, opts.shortlist_k);
+            vec![(winner, 1.0f64)]
         } else if opts.use_tficf {
             classify_tficf_scored(content, &candidates)
         } else {

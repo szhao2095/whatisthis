@@ -805,6 +805,47 @@ fn train_tficf_classifier() {
         centroid_map.build()
     )
     .unwrap();
+
+    // ── SimHash sketches for ANN shortlisting ─────────────────────────────────
+    // Sketch each centroid into a 64-bit integer. This uses the same mixing
+    // hash as src/detectors/ann.rs::hash_coord so the sketches are consistent.
+    let mut sketch_map = PhfMap::new();
+    let mut sketch_value_strs: HashMap<String, String> = HashMap::new();
+    for (lang, sparse) in centroids.iter() {
+        let sketch = simhash_for_codegen(sparse);
+        sketch_value_strs.insert(lang.clone(), format!("{}u64", sketch));
+    }
+    for (lang, value) in sketch_value_strs.iter() {
+        sketch_map.entry(&lang[..], &value[..]);
+    }
+    writeln!(
+        &mut file,
+        "static TFICF_SKETCHES: phf::Map<&'static str, u64> =\n{};\n",
+        sketch_map.build()
+    )
+    .unwrap();
+}
+
+fn simhash_for_codegen(v: &[(u32, f64)]) -> u64 {
+    if v.is_empty() { return 0; }
+    let mut bits = 0u64;
+    for bit in 0u64..64 {
+        let projection: f64 = v.iter().map(|(idx, val)| {
+            let h = hash_coord_for_codegen(*idx, bit);
+            *val * h
+        }).sum();
+        if projection >= 0.0 { bits |= 1u64 << bit; }
+    }
+    bits
+}
+
+fn hash_coord_for_codegen(coord: u32, bit: u64) -> f64 {
+    let mut h: u64 = 14695981039346656037u64;
+    h ^= coord as u64;
+    h = h.wrapping_mul(1099511628211);
+    h ^= bit;
+    h = h.wrapping_mul(1099511628211);
+    if h & (1u64 << 63) != 0 { 1.0 } else { -1.0 }
 }
 
 // ── Char n-gram linear classifier ────────────────────────────────────────────

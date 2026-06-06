@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use super::ann::{simhash, simhash_shortlist};
+
 include!("../codegen/tficf-model.rs");
 
 const MAX_TOKEN_BYTES: usize = 32;
@@ -65,6 +67,62 @@ pub fn classify_tficf_scored(content: &str, candidates: &[&'static str]) -> Vec<
 
 pub fn classify_tficf(content: &str, candidates: &[&'static str]) -> &'static str {
     classify_tficf_scored(content, candidates)[0].0
+}
+
+/// Like `classify_tficf` but uses SimHash shortlisting to prune the centroid
+/// search space before exact cosine computation. Only beneficial when
+/// `candidates` is empty (open-world against all ~700 language centroids).
+///
+/// `shortlist_k`: maximum number of candidates to shortlist from the full
+/// label space. Passing a small k (e.g. 16) makes this faster than exact
+/// search, with a small recall cost.
+pub fn classify_tficf_ann(content: &str, candidates: &[&'static str], shortlist_k: usize) -> &'static str {
+    if !candidates.is_empty() {
+        // Candidate set already small — just run exact scoring.
+        return classify_tficf(content, candidates);
+    }
+
+    // Build TF-IDF query vector (same as classify_tficf_scored).
+    let mut counts: HashMap<u32, u32> = HashMap::with_capacity(content.len() / 8);
+    for token in polyglot_tokenizer::get_linguist_tokens(content) {
+        if token.len() > MAX_TOKEN_BYTES { continue; }
+        if let Some(&idx) = TFICF_VOCABULARY.get(&*token) {
+            *counts.entry(idx).or_insert(0) += 1;
+        }
+    }
+    let mut query: Vec<(u32, f64)> = counts.into_iter().map(|(idx, freq)| {
+        let capped = freq.min(TF_CAP);
+        let tf = 1.0 + (capped as f64).ln();
+        (idx, tf * TFICF_ICF[idx as usize])
+    }).collect();
+    let norm = query.iter().map(|(_, v)| v * v).sum::<f64>().sqrt();
+    if norm > 0.0 { for (_, v) in query.iter_mut() { *v /= norm; } }
+    query.sort_by_key(|x| x.0);
+
+    // Sketch the query vector.
+    let query_sketch = simhash(&query);
+
+    // Build centroid sketch pairs for shortlisting.
+    let centroid_sketches: Vec<(&'static str, u64)> = TFICF_SKETCHES
+        .entries()
+        .map(|(&lang, &sketch)| (lang, sketch))
+        .collect();
+
+    let shortlist = simhash_shortlist(query_sketch, &centroid_sketches, shortlist_k);
+
+    // Exact cosine over the shortlist.
+    let mut best_lang = if shortlist.is_empty() { "" } else { shortlist[0] };
+    let mut best_score = f64::NEG_INFINITY;
+    for lang in &shortlist {
+        if let Some(centroid) = TFICF_CENTROIDS.get(lang) {
+            let score = cosine_dot(&query, centroid);
+            if score > best_score {
+                best_score = score;
+                best_lang = lang;
+            }
+        }
+    }
+    best_lang
 }
 
 #[cfg(test)]
